@@ -41,17 +41,24 @@ typedef signed int fix15 ;
 
 //Direct Digital Synthesis (DDS) parameters
 #define two32 4294967296.0  // 2^32 (a constant)
-#define Fs 50000
-#define DELAY 20 // 1/Fs (in microseconds)
+#define Fs 40000
+#define DELAY 25 // 1/Fs (in microseconds)
 
 // the DDS units - core 0
 // Phase accumulator and phase increment. Increment sets output frequency.
 volatile unsigned int phase_accum_main_0;
 volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
+unsigned int two32Fs = two32/Fs;
+
+volatile unsigned int freq_swp = 1740;
+volatile unsigned int freq_chp = 2000;
 
 // DDS sine table (populated in main())
 #define sine_table_size 256
 fix15 sin_table[sine_table_size] ;
+#define freq_table_size 5200
+fix15 swp_table[freq_table_size] ;
+fix15 chp_table[freq_table_size] ;
 
 // Values output to DAC
 int DAC_output_0 ;
@@ -65,14 +72,17 @@ fix15 current_amplitude_0 = 0 ;         // current amplitude (modified in ISR)
 fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 
 // Timing parameters for beeps (units of interrupts)
-#define ATTACK_TIME             250
-#define DECAY_TIME              250
-#define SUSTAIN_TIME            10000
-#define BEEP_DURATION           10500
+#define ATTACK_TIME             200
+#define DECAY_TIME              200
+#define SUSTAIN_TIME            4800
+#define BEEP_DURATION           5200
 #define BEEP_REPEAT_INTERVAL    50000
 
 // State machine variables
-volatile unsigned int STATE_0 = 0 ;
+#define IDLE   0
+#define SWOOP  1
+#define CHIRP  2
+volatile unsigned int STATE_0 = IDLE ;
 volatile unsigned int count_0 = 0 ;
 
 // SPI data
@@ -109,8 +119,10 @@ static void alarm_irq(void) {
     // Reset the alarm register
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
-    if (STATE_0 == 0) {
+    if (STATE_0 == SWOOP) {
         // DDS phase and sine table lookup
+        freq_swp = fix2int15(swp_table[count_0]);
+        phase_incr_main_0 = freq_swp * two32Fs;
         phase_accum_main_0 += phase_incr_main_0  ;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0>>24])) + 2048 ;
@@ -135,17 +147,52 @@ static void alarm_irq(void) {
 
         // State transition?
         if (count_0 == BEEP_DURATION) {
-            STATE_0 = 1 ;
+            STATE_0 = CHIRP ;
+            count_0 = 0 ;
+        }
+    }
+
+    else if (STATE_0 == CHIRP) {
+        // DDS phase and sine table lookup
+        freq_swp = fix2int15(chp_table[count_0]);
+        phase_incr_main_0 = freq_swp * two32Fs;
+        phase_accum_main_0 += phase_incr_main_0  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (count_0 < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        count_0 += 1 ;
+
+        // State transition?
+        if (count_0 == BEEP_DURATION) {
+            STATE_0 = IDLE ;
             count_0 = 0 ;
         }
     }
 
     // State transition?
     else {
+        freq_swp = 1740;
+        freq_chp = 2000;
         count_0 += 1 ;
         if (count_0 == BEEP_REPEAT_INTERVAL) {
             current_amplitude_0 = 0 ;
-            STATE_0 = 0 ;
+            STATE_0 = SWOOP ;
             count_0 = 0 ;
         }
     }
@@ -216,6 +263,16 @@ int main() {
     int ii;
     for (ii = 0; ii < sine_table_size; ii++){
          sin_table[ii] = float2fix15(2047*sin((float)ii*6.283/(float)sine_table_size));
+    }
+
+    int x1;
+    for (x1 = 0; x1 < freq_table_size; x1++){
+         swp_table[x1] = float2fix15(((float)-1/(float)26000) * (x1 - 2600) * (x1 - 2600) + 2000);
+    }
+
+    int x2;
+    for (x2 = 0; x2 < freq_table_size; x2++){
+         swp_table[x2] = float2fix15(0.000184 * (x2 - 2600) * (x2 - 2600) + 2000);
     }
 
     // Enable the interrupt for the alarm (we're using Alarm 0)
