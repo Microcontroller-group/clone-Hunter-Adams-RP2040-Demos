@@ -147,15 +147,15 @@ static void alarm_irq(void) {
 
         // State transition?
         if (count_0 == BEEP_DURATION) {
-            STATE_0 = CHIRP ;
+            STATE_0 = IDLE ;
             count_0 = 0 ;
         }
     }
 
     else if (STATE_0 == CHIRP) {
         // DDS phase and sine table lookup
-        freq_swp = fix2int15(chp_table[count_0]);
-        phase_incr_main_0 = freq_swp * two32Fs;
+        freq_chp = fix2int15(chp_table[count_0]);
+        phase_incr_main_0 = freq_chp * two32Fs;
         phase_accum_main_0 += phase_incr_main_0  ;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0>>24])) + 2048 ;
@@ -180,7 +180,7 @@ static void alarm_irq(void) {
 
         // State transition?
         if (count_0 == BEEP_DURATION) {
-            STATE_0 = IDLE ;
+            STATE_0 = SWOOP ;
             count_0 = 0 ;
         }
     }
@@ -192,7 +192,7 @@ static void alarm_irq(void) {
         count_0 += 1 ;
         if (count_0 == BEEP_REPEAT_INTERVAL) {
             current_amplitude_0 = 0 ;
-            STATE_0 = SWOOP ;
+            STATE_0 = CHIRP ;
             count_0 = 0 ;
         }
     }
@@ -272,7 +272,7 @@ int main() {
 
     int x2;
     for (x2 = 0; x2 < freq_table_size; x2++){
-         swp_table[x2] = float2fix15(0.000184 * (x2 - 2600) * (x2 - 2600) + 2000);
+         chp_table[x2] = float2fix15(0.000184 * x2 * x2 + 2000);
     }
 
     // Enable the interrupt for the alarm (we're using Alarm 0)
