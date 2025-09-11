@@ -147,7 +147,7 @@ static void alarm_irq(void) {
 
         // State transition?
         if (count_0 == BEEP_DURATION) {
-            STATE_0 = IDLE ;
+            STATE_0 = CHIRP ;
             count_0 = 0 ;
         }
     }
@@ -180,19 +180,17 @@ static void alarm_irq(void) {
 
         // State transition?
         if (count_0 == BEEP_DURATION) {
-            STATE_0 = SWOOP ;
+            STATE_0 = IDLE ;
             count_0 = 0 ;
         }
     }
 
     // State transition?
     else {
-        freq_swp = 1740;
-        freq_chp = 2000;
         count_0 += 1 ;
         if (count_0 == BEEP_REPEAT_INTERVAL) {
             current_amplitude_0 = 0 ;
-            STATE_0 = CHIRP ;
+            STATE_0 = SWOOP ;
             count_0 = 0 ;
         }
     }
