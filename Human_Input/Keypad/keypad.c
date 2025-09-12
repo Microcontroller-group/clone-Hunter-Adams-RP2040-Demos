@@ -63,6 +63,199 @@ unsigned int button = 0x70 ;
 char keytext[40];
 int prev_key = 0;
 
+// Debouncing FSM
+#define NOT_PRESSED        0
+#define MAYBE_PRESSED      1
+#define PRESSED            2
+#define MAYBE_NOT_PRESSED  3
+volatile unsigned int DB_STATE = NOT_PRESSED;
+
+// ================================================================
+// ========================== START BEEP ==========================
+// ================================================================
+
+// Low-level alarm infrastructure we'll be using
+#define ALARM_NUM 0
+#define ALARM_IRQ TIMER_IRQ_0
+
+// Macros for fixed-point arithmetic (faster than floating point)
+typedef signed int fix15 ;
+#define multfix15(a,b) ((fix15)((((signed long long)(a))*((signed long long)(b)))>>15))
+#define float2fix15(a) ((fix15)((a)*32768.0)) 
+#define fix2float15(a) ((float)(a)/32768.0)
+#define absfix15(a) abs(a) 
+#define int2fix15(a) ((fix15)(a << 15))
+#define fix2int15(a) ((int)(a >> 15))
+#define char2fix15(a) (fix15)(((fix15)(a)) << 15)
+#define divfix(a,b) (fix15)( (((signed long long)(a)) << 15) / (b))
+
+//Direct Digital Synthesis (DDS) parameters
+#define two32 4294967296.0  // 2^32 (a constant)
+#define Fs 40000
+#define DELAY 25 // 1/Fs (in microseconds)
+
+// the DDS units - core 0
+// Phase accumulator and phase increment. Increment sets output frequency.
+volatile unsigned int phase_accum_main_0;
+//volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
+volatile unsigned int phase_incr_main_0;
+
+// Frequency modulation
+volatile unsigned int freq;
+unsigned int two32Fs = two32/Fs;
+
+// DDS sine table (populated in main())
+#define sine_table_size 256
+fix15 sin_table[sine_table_size] ;
+#define freq_table_size 325
+fix15 swoop_table[freq_table_size] ;
+fix15 chirp_table[freq_table_size] ;
+
+// Values output to DAC
+int DAC_output_0 ;
+int DAC_output_1 ;
+
+// Amplitude modulation parameters and variables
+fix15 max_amplitude = int2fix15(1) ;    // maximum amplitude
+fix15 attack_inc ;                      // rate at which sound ramps up
+fix15 decay_inc ;                       // rate at which sound ramps down
+fix15 current_amplitude_0 = 0 ;         // current amplitude (modified in ISR)
+fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
+
+// Timing parameters for beeps (units of interrupts)
+#define ATTACK_TIME             200
+#define DECAY_TIME              200
+#define SUSTAIN_TIME            4800
+#define BEEP_DURATION           5200
+#define BEEP_REPEAT_INTERVAL    20000
+
+// State machine variables
+#define IDLE   0
+#define SWOOP  1
+#define CHIRP  2
+volatile unsigned int BP_STATE = IDLE ;
+volatile unsigned int counter = 0 ;
+
+// SPI data
+uint16_t DAC_data_1 ; // output value
+uint16_t DAC_data_0 ; // output value
+
+// DAC parameters (see the DAC datasheet)
+// A-channel, 1x, active
+#define DAC_config_chan_A 0b0011000000000000
+// B-channel, 1x, active
+#define DAC_config_chan_B 0b1011000000000000
+
+//SPI configurations (note these represent GPIO number, NOT pin number)
+#define PIN_MISO 4
+#define PIN_CS   5
+#define PIN_SCK  6
+#define PIN_MOSI 7
+#define LDAC     8
+#define LED      25
+#define SPI_PORT spi0
+
+//GPIO for timing the ISR
+#define ISR_GPIO 2
+
+// This timer ISR is called on core 0
+static void alarm_irq(void) {
+
+    // Assert a GPIO when we enter the interrupt
+    gpio_put(ISR_GPIO, 1) ;
+
+    // Clear the alarm irq
+    hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
+
+    // Reset the alarm register
+    timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
+
+    if ( BP_STATE == SWOOP ) {
+        // Frequency modulation table lookup
+        freq = fix2int15(swoop_table[counter>>4]);
+        phase_incr_main_0 = freq * two32Fs;
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (counter < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (counter > BEEP_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        counter += 1 ;
+
+        // State transition?
+        if (counter == BEEP_DURATION) {
+            BP_STATE = CHIRP ;
+            counter = 0 ;
+        }
+    } else if ( BP_STATE == CHIRP ) {
+        // Frequency modulation table lookup
+        freq = fix2int15(chirp_table[counter>>4]);
+        phase_incr_main_0 = freq * two32Fs;
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (counter < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (counter > BEEP_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        counter += 1 ;
+
+        // State transition?
+        if (counter == BEEP_DURATION) {
+            BP_STATE = IDLE ;
+            counter = 0 ;
+        }
+    }
+
+    // State transition?
+    else {
+        // counter += 1 ;
+        // if (counter == BEEP_REPEAT_INTERVAL) {
+        //     current_amplitude_0 = 0 ;
+        //     BP_STATE = SWOOP ;
+        //     counter = 0 ;
+        // }
+        current_amplitude_0 = 0;
+    }
+
+    // De-assert the GPIO when we leave the interrupt
+    gpio_put(ISR_GPIO, 0) ;
+
+}
+
+// ================================================================
+// =========================== END BEEP ===========================
+// ================================================================
+
 // This thread runs on core 0
 static PT_THREAD (protothread_core_0(struct pt *pt))
 {
@@ -71,6 +264,7 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
 
     // Some variables
     static int i ;
+    static int i_possible;
     static uint32_t keypad ;
 
     while(1) {
@@ -113,8 +307,48 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             writeString(keytext) ;
         }
 
+        // Debouncing FSM
+        if ( DB_STATE == NOT_PRESSED ) {
+            if ( i == -1 ) {
+                DB_STATE = NOT_PRESSED;
+            } else {
+                i_possible = i;
+                DB_STATE = MAYBE_PRESSED;
+            }
+        } else if ( DB_STATE == MAYBE_PRESSED ) {
+            if ( i == i_possible ) {
+                DB_STATE = PRESSED;
+            } else {
+                DB_STATE = NOT_PRESSED;
+            }
+        } else if ( DB_STATE == PRESSED ) {
+            if ( i == i_possible ) {
+                DB_STATE = PRESSED;
+            } else {
+                DB_STATE = MAYBE_NOT_PRESSED;
+            }
+        } else if ( DB_STATE == MAYBE_NOT_PRESSED ) {
+            if ( i == i_possible ) {
+                DB_STATE = PRESSED;
+            } else {
+                DB_STATE = NOT_PRESSED;
+            }
+        }
+
+        if ( DB_STATE == PRESSED && BP_STATE == IDLE ) {
+            if ( i == 1 ) {
+                BP_STATE = SWOOP;
+            } else if ( i == 2 ) {
+                BP_STATE = CHIRP;
+            } else {
+                BP_STATE = IDLE;
+            }
+        }
+
         // Print key to terminal
         printf("\n%d", i) ;
+        printf("\n%d", DB_STATE);
+        printf("\n%d", BP_STATE);
 
         PT_YIELD_usec(30000) ;
     }
@@ -171,6 +405,78 @@ int main() {
     gpio_pull_down((BASE_KEYPAD_PIN + 5)) ;
     gpio_pull_down((BASE_KEYPAD_PIN + 6)) ;
 
+    // ================================================================
+    // ========================== START BEEP ==========================
+    // ================================================================
+
+    // Initialize stdio/uart (printf won't work unless you do this!)
+    //stdio_init_all();
+    printf("Hello, friends!\n");
+
+    // Initialize SPI channel (channel, baud rate set to 20MHz)
+    spi_init(SPI_PORT, 20000000) ;
+    // Format (channel, data bits per transfer, polarity, phase, order)
+    spi_set_format(SPI_PORT, 16, 0, 0, 0);
+
+    // Map SPI signals to GPIO ports
+    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_CS, GPIO_FUNC_SPI) ;
+
+    // Map LDAC pin to GPIO port, hold it low (could alternatively tie to GND)
+    gpio_init(LDAC) ;
+    gpio_set_dir(LDAC, GPIO_OUT) ;
+    gpio_put(LDAC, 0) ;
+
+    // Setup the ISR-timing GPIO
+    gpio_init(ISR_GPIO) ;
+    gpio_set_dir(ISR_GPIO, GPIO_OUT);
+    gpio_put(ISR_GPIO, 0) ;
+
+    // Map LED to GPIO port, make it low
+    //gpio_init(LED) ;
+    //gpio_set_dir(LED, GPIO_OUT) ;
+    //gpio_put(LED, 0) ;
+
+    // set up increments for calculating bow envelope
+    attack_inc = divfix(max_amplitude, int2fix15(ATTACK_TIME)) ;
+    decay_inc =  divfix(max_amplitude, int2fix15(DECAY_TIME)) ;
+
+    // Build the sine lookup table
+    // scaled to produce values between 0 and 4096 (for 12-bit DAC)
+    int ii;
+    for (ii = 0; ii < sine_table_size; ii++){
+         sin_table[ii] = float2fix15(2047*sin((float)ii*6.283/(float)sine_table_size));
+    }
+
+    // Build frequency modulation lookup table
+    for (int x = 0; x < freq_table_size; x++) {
+        swoop_table[x] = float2fix15( 260 * sin((float)3.1415*x/(float)325) + 1740 );
+    }
+    for (int x = 0; x < freq_table_size; x++) {
+        chirp_table[x] = float2fix15( 0.047104*x*x + 2000 );
+    }
+
+    // Enable the interrupt for the alarm (we're using Alarm 0)
+    hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM) ;
+    // Associate an interrupt handler with the ALARM_IRQ
+    irq_set_exclusive_handler(ALARM_IRQ, alarm_irq) ;
+    // Enable the alarm interrupt
+    irq_set_enabled(ALARM_IRQ, true) ;
+    // Write the lower 32 bits of the target time to the alarm register, arming it.
+    timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
+
+    // Add core 0 threads
+    //pt_add_thread(protothread_core_0) ;
+
+    // Start scheduling core 0 threads
+    //pt_schedule_start ;
+
+    // ================================================================
+    // =========================== END BEEP ===========================
+    // ================================================================
+
     // Add core 0 threads
     pt_add_thread(protothread_core_0) ;
 
@@ -178,3 +484,5 @@ int main() {
     pt_schedule_start ;
 
 }
+
+// Last edit: 2025.09.12 01:01
