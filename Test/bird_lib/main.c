@@ -35,13 +35,34 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
 {
     // Indicate thread beginning
     PT_BEGIN(pt);
+    
+    static int sound_counter = 0;
+    
     while(1) {
         
         // Toggle LED like a bird's heartbeat
         gpio_put(LED, !gpio_get(LED));
 
-        // Yield for 500 ms
-        PT_YIELD_usec(500000);
+        // Trigger different bird sounds every 3 seconds
+        sound_counter++;
+        if (sound_counter >= 60) { // 60 * 50ms = 3 seconds
+            sound_counter = 0;
+            
+            // Alternate between swoop and chirp sounds
+            static int sound_type = 0;
+            if (sound_type == 0) {
+                printf("Playing swoop sound...\n");
+                bird_trigger_swoop();
+                sound_type = 1;
+            } else {
+                printf("Playing chirp sound...\n");
+                bird_trigger_chirp();
+                sound_type = 0;
+            }
+        }
+
+        // Yield for 50 ms
+        PT_YIELD_usec(50000);
     }
     // Indicate thread end
     PT_END(pt);

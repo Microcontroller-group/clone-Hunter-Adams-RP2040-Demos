@@ -8,12 +8,12 @@
 
 #include "fixed_point.h"
 
-// Timing parameters for beeps (units of interrupts)
+// Timing parameters for beeps (units of interrupts at 50kHz)
 #define ATTACK_TIME             250
 #define DECAY_TIME              250
-#define SUSTAIN_TIME            10000
-#define BEEP_DURATION           10500
-#define BEEP_REPEAT_INTERVAL    50000
+#define SUSTAIN_TIME            6000
+#define BEEP_DURATION           6500
+#define BEEP_REPEAT_INTERVAL    20000
 
 // Envelope state variables
 extern fix15 max_amplitude;
