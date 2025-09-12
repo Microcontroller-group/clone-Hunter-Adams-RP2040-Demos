@@ -25,6 +25,13 @@
  *  - GPIO 0        -->     UART RX (white)
  *  - GPIO 1        -->     UART TX (green)
  *  - RP2040 GND    -->     UART GND
+ * 
+ * KEYPAD FUNCTIONS
+ *  - Button 1 (i ==  1) --> Swoop
+ *  - Button 2 (i ==  2) --> Chirp
+ *  - Button 3 (i ==  3) --> Silence
+ *  - Button * (i == 10) --> Record
+ *  - Button # (i == 11) --> Play
  */
 
 #include <stdio.h>
@@ -72,10 +79,17 @@ volatile unsigned int DB_STATE = NOT_PRESSED;
 volatile unsigned int AC_NEW = 1;
 
 // Rercord FSM
-#define PLAY    0
+#define FREE    0
 #define RECORD  1
-volatile unsigned int RC_STATE = PLAY;
-int key_seq[100] = {0};
+#define PLAY    2
+volatile unsigned int RC_STATE = FREE;
+#define MAX_SONG_LENGTH  100
+int key_seq[MAX_SONG_LENGTH] = {0};
+int song_index = 0;
+int play_index = 0;
+
+// Print counter
+volatile unsigned int print_counter = 0;
 
 // ================================================================
 // ========================== START BEEP ==========================
@@ -137,9 +151,10 @@ fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 #define BEEP_REPEAT_INTERVAL    20000
 
 // State machine variables
-#define IDLE   0
-#define SWOOP  1
-#define CHIRP  2
+#define IDLE     0
+#define SWOOP    1
+#define CHIRP    2
+#define SILENCE  3
 volatile unsigned int BP_STATE = IDLE ;
 volatile unsigned int counter = 0 ;
 
@@ -240,6 +255,12 @@ static void alarm_irq(void) {
         if (counter == BEEP_DURATION) {
             BP_STATE = IDLE ;
             counter = 0 ;
+        }
+    } else if ( BP_STATE == SILENCE ) {
+        counter += 1;
+        if ( counter == BEEP_DURATION ) {
+            BP_STATE = IDLE;
+            counter = 0;
         }
     }
 
@@ -346,8 +367,33 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             if ( i == 1 ) {
                 BP_STATE = SWOOP;
                 AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
             } else if ( i == 2 ) {
                 BP_STATE = CHIRP;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
+            } else if ( i == 3 ) {
+                BP_STATE = SILENCE;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
+            } else if (i == 10) {
+                RC_STATE = RECORD;
+                AC_NEW = 0;
+                for (int i = 0; i < song_index; i++) {
+                    key_seq[i] = 0;
+                }
+                song_index = 0;
+            } else if (i == 11) {
+                RC_STATE = PLAY;
                 AC_NEW = 0;
             } else {
                 BP_STATE = IDLE;
@@ -358,10 +404,30 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             AC_NEW = 1;
         }
 
+        // Record FSM
+        if ( RC_STATE == PLAY ) {
+            if ( key_seq[play_index] == 0 ) {
+                RC_STATE = FREE;
+                play_index = 0;
+            } else {
+                if ( BP_STATE == IDLE ) {
+                    BP_STATE = key_seq[play_index];
+                    play_index += 1;
+                }
+            }
+        } else if ( RC_STATE == RECORD ) {
+        } else if ( RC_STATE == FREE ) {
+        }
+
         // Print key to terminal
-        printf("\n Keyscan  %d", i) ;
-        printf("\nDB_STATE  %d", DB_STATE);
-        printf("\nBP_STATE  %d", BP_STATE);
+        if ( print_counter == 10 ) {
+            printf("\n Keyscan %d  DB_STATE %d  BP_STATE %d  RC_STATE %d  play_index %d", 
+                i, DB_STATE, BP_STATE, RC_STATE, play_index) ;
+            printf("\n key_seq %d %d %d %d %d", 
+                key_seq[0], key_seq[1], key_seq[2], key_seq[3], key_seq[4] );
+            print_counter = 0;
+        }
+        print_counter += 1;
 
         PT_YIELD_usec(30000) ;
     }
