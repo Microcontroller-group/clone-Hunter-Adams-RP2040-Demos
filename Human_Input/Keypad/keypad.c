@@ -91,8 +91,8 @@ typedef signed int fix15 ;
 
 //Direct Digital Synthesis (DDS) parameters
 #define two32 4294967296.0  // 2^32 (a constant)
-#define Fs 40000
-#define DELAY 25 // 1/Fs (in microseconds)
+#define Fs 50000
+#define DELAY 20 // 1/Fs (in microseconds)
 
 // the DDS units - core 0
 // Phase accumulator and phase increment. Increment sets output frequency.
@@ -107,7 +107,7 @@ unsigned int two32Fs = two32/Fs;
 // DDS sine table (populated in main())
 #define sine_table_size 256
 fix15 sin_table[sine_table_size] ;
-#define freq_table_size 325
+#define freq_table_size 407
 fix15 swoop_table[freq_table_size] ;
 fix15 chirp_table[freq_table_size] ;
 
@@ -123,10 +123,10 @@ fix15 current_amplitude_0 = 0 ;         // current amplitude (modified in ISR)
 fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 
 // Timing parameters for beeps (units of interrupts)
-#define ATTACK_TIME             200
-#define DECAY_TIME              200
-#define SUSTAIN_TIME            4800
-#define BEEP_DURATION           5200
+#define ATTACK_TIME             250
+#define DECAY_TIME              250
+#define SUSTAIN_TIME            6000
+#define BEEP_DURATION           6500
 #define BEEP_REPEAT_INTERVAL    20000
 
 // State machine variables
@@ -199,7 +199,7 @@ static void alarm_irq(void) {
 
         // State transition?
         if (counter == BEEP_DURATION) {
-            BP_STATE = CHIRP ;
+            BP_STATE = IDLE ;
             counter = 0 ;
         }
     } else if ( BP_STATE == CHIRP ) {
@@ -346,9 +346,9 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
         }
 
         // Print key to terminal
-        printf("\n%d", i) ;
-        printf("\n%d", DB_STATE);
-        printf("\n%d", BP_STATE);
+        printf("\n Keyscan  %d", i) ;
+        printf("\nDB_STATE  %d", DB_STATE);
+        printf("\nBP_STATE  %d", BP_STATE);
 
         PT_YIELD_usec(30000) ;
     }
@@ -452,10 +452,10 @@ int main() {
 
     // Build frequency modulation lookup table
     for (int x = 0; x < freq_table_size; x++) {
-        swoop_table[x] = float2fix15( 260 * sin((float)3.1415*x/(float)325) + 1740 );
+        swoop_table[x] = float2fix15( 260 * sin((float)3.1415*x/(float)406.25) + 1740 );
     }
     for (int x = 0; x < freq_table_size; x++) {
-        chirp_table[x] = float2fix15( 0.047104*x*x + 2000 );
+        chirp_table[x] = float2fix15( 0.03015*x*x + 2000 );
     }
 
     // Enable the interrupt for the alarm (we're using Alarm 0)
