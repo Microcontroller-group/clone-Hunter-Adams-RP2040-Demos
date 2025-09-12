@@ -69,6 +69,13 @@ int prev_key = 0;
 #define PRESSED            2
 #define MAYBE_NOT_PRESSED  3
 volatile unsigned int DB_STATE = NOT_PRESSED;
+volatile unsigned int AC_NEW = 1;
+
+// Rercord FSM
+#define PLAY    0
+#define RECORD  1
+volatile unsigned int RC_STATE = PLAY;
+int key_seq[100] = {0};
 
 // ================================================================
 // ========================== START BEEP ==========================
@@ -335,14 +342,20 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             }
         }
 
-        if ( DB_STATE == PRESSED && BP_STATE == IDLE ) {
+        if ( DB_STATE == PRESSED && AC_NEW == 1 && BP_STATE == IDLE ) {
             if ( i == 1 ) {
                 BP_STATE = SWOOP;
+                AC_NEW = 0;
             } else if ( i == 2 ) {
                 BP_STATE = CHIRP;
+                AC_NEW = 0;
             } else {
                 BP_STATE = IDLE;
             }
+        }
+
+        if ( DB_STATE == NOT_PRESSED ) {
+            AC_NEW = 1;
         }
 
         // Print key to terminal
