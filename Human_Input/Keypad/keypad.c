@@ -421,8 +421,8 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
 
         // Print key to terminal
         if ( print_counter == 10 ) {
-            printf("\n Keyscan %d  DB_STATE %d  BP_STATE %d  RC_STATE %d  play_index %d", 
-                i, DB_STATE, BP_STATE, RC_STATE, play_index) ;
+            printf("\n Keyscan %d  DB_STATE %d  BP_STATE %d  RC_STATE %d", 
+                i, DB_STATE, BP_STATE, RC_STATE) ;
             printf("\n key_seq %d %d %d %d %d", 
                 key_seq[0], key_seq[1], key_seq[2], key_seq[3], key_seq[4] );
             print_counter = 0;
