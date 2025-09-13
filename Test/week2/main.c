@@ -73,8 +73,8 @@
 #define LED 25
 
 // Keypad key mappings
-#define KEY_1_INDEX 0  // Key '1' corresponds to index 0
-#define KEY_2_INDEX 1  // Key '2' corresponds to index 1
+#define KEY_1_INDEX 1  // Key '1' corresponds to index 0
+#define KEY_2_INDEX 2  // Key '2' corresponds to index 1
 
 // This thread runs on core 0
 static PT_THREAD (protothread_core_0(struct pt *pt))
@@ -106,11 +106,11 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
 
         // Update FSM with new keypad input
         state_changed = keypad_fsm_update(&fsm, current_key);
-
+        
         // Check for key press events and trigger bird sounds
         if (state_changed && keypad_fsm_is_key_pressed(&fsm)) {
-            int pressed_key = keypad_fsm_get_current_key(&fsm);
-            
+            int pressed_key = keypad_fsm_get_current_key(&fsm);        
+
             if (pressed_key == KEY_1_INDEX) {
                 printf("Key '1' pressed! Playing swoop sound...\n");
                 bird_trigger_swoop();
