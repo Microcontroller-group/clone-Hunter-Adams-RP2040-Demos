@@ -25,6 +25,13 @@
  *  - GPIO 0        -->     UART RX (white)
  *  - GPIO 1        -->     UART TX (green)
  *  - RP2040 GND    -->     UART GND
+ * 
+ * KEYPAD FUNCTIONS
+ *  - Button 1 (i ==  1) --> Swoop
+ *  - Button 2 (i ==  2) --> Chirp
+ *  - Button 3 (i ==  3) --> Silence
+ *  - Button * (i == 10) --> Record
+ *  - Button # (i == 11) --> Play
  */
 
 #include <stdio.h>
@@ -63,8 +70,30 @@ unsigned int button = 0x70 ;
 char keytext[40];
 int prev_key = 0;
 
-// -------------------------------------------------------------
-// -------------------------------------------------------------
+// Debouncing FSM
+#define NOT_PRESSED        0
+#define MAYBE_PRESSED      1
+#define PRESSED            2
+#define MAYBE_NOT_PRESSED  3
+volatile unsigned int DB_STATE = NOT_PRESSED;
+volatile unsigned int AC_NEW = 1;
+
+// Rercord FSM
+#define FREE    0
+#define RECORD  1
+#define PLAY    2
+volatile unsigned int RC_STATE = FREE;
+#define MAX_SONG_LENGTH  100
+int key_seq[MAX_SONG_LENGTH] = {0};
+int song_index = 0;
+int play_index = 0;
+
+// Print counter
+volatile unsigned int print_counter = 0;
+
+// ================================================================
+// ========================== START BEEP ==========================
+// ================================================================
 
 // Low-level alarm infrastructure we'll be using
 #define ALARM_NUM 0
@@ -83,24 +112,25 @@ typedef signed int fix15 ;
 
 //Direct Digital Synthesis (DDS) parameters
 #define two32 4294967296.0  // 2^32 (a constant)
-#define Fs 40000
-#define DELAY 25 // 1/Fs (in microseconds)
+#define Fs 50000
+#define DELAY 20 // 1/Fs (in microseconds)
 
 // the DDS units - core 0
 // Phase accumulator and phase increment. Increment sets output frequency.
 volatile unsigned int phase_accum_main_0;
-volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
-unsigned int two32Fs = two32/Fs;
+//volatile unsigned int phase_incr_main_0 = (400.0*two32)/Fs ;
+volatile unsigned int phase_incr_main_0;
 
-volatile unsigned int freq_swp = 1740;
-volatile unsigned int freq_chp = 2000;
+// Frequency modulation
+volatile unsigned int freq;
+unsigned int two32Fs = two32/Fs;
 
 // DDS sine table (populated in main())
 #define sine_table_size 256
 fix15 sin_table[sine_table_size] ;
-#define freq_table_size 5200
-fix15 swp_table[freq_table_size] ;
-fix15 chp_table[freq_table_size] ;
+#define freq_table_size 407
+fix15 swoop_table[freq_table_size] ;
+fix15 chirp_table[freq_table_size] ;
 
 // Values output to DAC
 int DAC_output_0 ;
@@ -114,18 +144,19 @@ fix15 current_amplitude_0 = 0 ;         // current amplitude (modified in ISR)
 fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 
 // Timing parameters for beeps (units of interrupts)
-#define ATTACK_TIME             200
-#define DECAY_TIME              200
-#define SUSTAIN_TIME            4800
-#define BEEP_DURATION           5200
-#define BEEP_REPEAT_INTERVAL    50000
+#define ATTACK_TIME             250
+#define DECAY_TIME              250
+#define SUSTAIN_TIME            6000
+#define BEEP_DURATION           6500
+#define BEEP_REPEAT_INTERVAL    20000
 
 // State machine variables
-#define IDLE   0
-#define SWOOP  1
-#define CHIRP  2
-volatile unsigned int STATE_0 = IDLE ;
-volatile unsigned int count_0 = 0 ;
+#define IDLE     0
+#define SWOOP    1
+#define CHIRP    2
+#define SILENCE  3
+volatile unsigned int BP_STATE = IDLE ;
+volatile unsigned int counter = 0 ;
 
 // SPI data
 uint16_t DAC_data_1 ; // output value
@@ -161,20 +192,21 @@ static void alarm_irq(void) {
     // Reset the alarm register
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
-    if (STATE_0 == SWOOP) {
+    if ( BP_STATE == SWOOP ) {
+        // Frequency modulation table lookup
+        freq = fix2int15(swoop_table[counter>>4]);
+        phase_incr_main_0 = freq * two32Fs;
         // DDS phase and sine table lookup
-        freq_swp = fix2int15(swp_table[count_0]);
-        phase_incr_main_0 = freq_swp * two32Fs;
         phase_accum_main_0 += phase_incr_main_0  ;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0>>24])) + 2048 ;
 
         // Ramp up amplitude
-        if (count_0 < ATTACK_TIME) {
+        if (counter < ATTACK_TIME) {
             current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
         }
         // Ramp down amplitude
-        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
+        else if (counter > BEEP_DURATION - DECAY_TIME) {
             current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
         }
 
@@ -185,29 +217,28 @@ static void alarm_irq(void) {
         spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
 
         // Increment the counter
-        count_0 += 1 ;
+        counter += 1 ;
 
         // State transition?
-        if (count_0 == BEEP_DURATION) {
-            STATE_0 = IDLE ;
-            count_0 = 0 ;
+        if (counter == BEEP_DURATION) {
+            BP_STATE = IDLE ;
+            counter = 0 ;
         }
-    }
-
-    else if (STATE_0 == CHIRP) {
+    } else if ( BP_STATE == CHIRP ) {
+        // Frequency modulation table lookup
+        freq = fix2int15(chirp_table[counter>>4]);
+        phase_incr_main_0 = freq * two32Fs;
         // DDS phase and sine table lookup
-        freq_chp = fix2int15(chp_table[count_0]);
-        phase_incr_main_0 = freq_chp * two32Fs;
         phase_accum_main_0 += phase_incr_main_0  ;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0>>24])) + 2048 ;
 
         // Ramp up amplitude
-        if (count_0 < ATTACK_TIME) {
+        if (counter < ATTACK_TIME) {
             current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
         }
         // Ramp down amplitude
-        else if (count_0 > BEEP_DURATION - DECAY_TIME) {
+        else if (counter > BEEP_DURATION - DECAY_TIME) {
             current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
         }
 
@@ -218,32 +249,40 @@ static void alarm_irq(void) {
         spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
 
         // Increment the counter
-        count_0 += 1 ;
+        counter += 1 ;
 
         // State transition?
-        if (count_0 == BEEP_DURATION) {
-            STATE_0 = IDLE ;
-            count_0 = 0 ;
+        if (counter == BEEP_DURATION) {
+            BP_STATE = IDLE ;
+            counter = 0 ;
+        }
+    } else if ( BP_STATE == SILENCE ) {
+        counter += 1;
+        if ( counter == BEEP_DURATION ) {
+            BP_STATE = IDLE;
+            counter = 0;
         }
     }
 
     // State transition?
-    // else {
-    //     count_0 += 1 ;
-    //     if (count_0 == BEEP_REPEAT_INTERVAL) {
-    //         current_amplitude_0 = 0 ;
-    //         STATE_0 = SWOOP ;
-    //         count_0 = 0 ;
-    //     }
-    // }
+    else {
+        // counter += 1 ;
+        // if (counter == BEEP_REPEAT_INTERVAL) {
+        //     current_amplitude_0 = 0 ;
+        //     BP_STATE = SWOOP ;
+        //     counter = 0 ;
+        // }
+        current_amplitude_0 = 0;
+    }
 
     // De-assert the GPIO when we leave the interrupt
     gpio_put(ISR_GPIO, 0) ;
 
 }
 
-// --------------------------------------------------------
-// --------------------------------------------------------
+// ================================================================
+// =========================== END BEEP ===========================
+// ================================================================
 
 // This thread runs on core 0
 static PT_THREAD (protothread_core_0(struct pt *pt))
@@ -253,6 +292,7 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
 
     // Some variables
     static int i ;
+    static int i_possible;
     static uint32_t keypad ;
 
     while(1) {
@@ -295,16 +335,99 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             writeString(keytext) ;
         }
 
-        // Print key to terminal
-        printf("\n%d", i) ;
-
-        if (i == 1) {
-            STATE_0 = SWOOP;
-        } else if (i == 2) {
-            STATE_0 = CHIRP;
-        } else {
-            STATE_0 = IDLE;
+        // Debouncing FSM
+        if ( DB_STATE == NOT_PRESSED ) {
+            if ( i == -1 ) {
+                DB_STATE = NOT_PRESSED;
+            } else {
+                i_possible = i;
+                DB_STATE = MAYBE_PRESSED;
+            }
+        } else if ( DB_STATE == MAYBE_PRESSED ) {
+            if ( i == i_possible ) {
+                DB_STATE = PRESSED;
+            } else {
+                DB_STATE = NOT_PRESSED;
+            }
+        } else if ( DB_STATE == PRESSED ) {
+            if ( i == i_possible ) {
+                DB_STATE = PRESSED;
+            } else {
+                DB_STATE = MAYBE_NOT_PRESSED;
+            }
+        } else if ( DB_STATE == MAYBE_NOT_PRESSED ) {
+            if ( i == i_possible ) {
+                DB_STATE = PRESSED;
+            } else {
+                DB_STATE = NOT_PRESSED;
+            }
         }
+
+        if ( DB_STATE == PRESSED && AC_NEW == 1 && BP_STATE == IDLE ) {
+            if ( i == 1 ) {
+                BP_STATE = SWOOP;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
+            } else if ( i == 2 ) {
+                BP_STATE = CHIRP;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
+            } else if ( i == 3 ) {
+                BP_STATE = SILENCE;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
+            } else if (i == 10) {
+                RC_STATE = RECORD;
+                AC_NEW = 0;
+                for (int i = 0; i < song_index; i++) {
+                    key_seq[i] = 0;
+                }
+                song_index = 0;
+            } else if (i == 11) {
+                RC_STATE = PLAY;
+                AC_NEW = 0;
+            } else {
+                BP_STATE = IDLE;
+            }
+        }
+
+        if ( DB_STATE == NOT_PRESSED ) {
+            AC_NEW = 1;
+        }
+
+        // Record FSM
+        if ( RC_STATE == PLAY ) {
+            if ( key_seq[play_index] == 0 ) {
+                RC_STATE = FREE;
+                play_index = 0;
+            } else {
+                if ( BP_STATE == IDLE ) {
+                    BP_STATE = key_seq[play_index];
+                    play_index += 1;
+                }
+            }
+        } else if ( RC_STATE == RECORD ) {
+        } else if ( RC_STATE == FREE ) {
+        }
+
+        // Print key to terminal
+        if ( print_counter == 10 ) {
+            printf("\n Keyscan %d  DB_STATE %d  BP_STATE %d  RC_STATE %d", 
+                i, DB_STATE, BP_STATE, RC_STATE) ;
+            printf("\n key_seq %d %d %d %d %d", 
+                key_seq[0], key_seq[1], key_seq[2], key_seq[3], key_seq[4] );
+            print_counter = 0;
+        }
+        print_counter += 1;
 
         PT_YIELD_usec(30000) ;
     }
@@ -361,8 +484,43 @@ int main() {
     gpio_pull_down((BASE_KEYPAD_PIN + 5)) ;
     gpio_pull_down((BASE_KEYPAD_PIN + 6)) ;
 
-    // ------------------------------------------------------------
-    // ------------------------------------------------------------
+    // ================================================================
+    // ========================== START BEEP ==========================
+    // ================================================================
+
+    // Initialize stdio/uart (printf won't work unless you do this!)
+    //stdio_init_all();
+    printf("Hello, friends!\n");
+
+    // Initialize SPI channel (channel, baud rate set to 20MHz)
+    spi_init(SPI_PORT, 20000000) ;
+    // Format (channel, data bits per transfer, polarity, phase, order)
+    spi_set_format(SPI_PORT, 16, 0, 0, 0);
+
+    // Map SPI signals to GPIO ports
+    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_CS, GPIO_FUNC_SPI) ;
+
+    // Map LDAC pin to GPIO port, hold it low (could alternatively tie to GND)
+    gpio_init(LDAC) ;
+    gpio_set_dir(LDAC, GPIO_OUT) ;
+    gpio_put(LDAC, 0) ;
+
+    // Setup the ISR-timing GPIO
+    gpio_init(ISR_GPIO) ;
+    gpio_set_dir(ISR_GPIO, GPIO_OUT);
+    gpio_put(ISR_GPIO, 0) ;
+
+    // Map LED to GPIO port, make it low
+    //gpio_init(LED) ;
+    //gpio_set_dir(LED, GPIO_OUT) ;
+    //gpio_put(LED, 0) ;
+
+    // set up increments for calculating bow envelope
+    attack_inc = divfix(max_amplitude, int2fix15(ATTACK_TIME)) ;
+    decay_inc =  divfix(max_amplitude, int2fix15(DECAY_TIME)) ;
 
     // Build the sine lookup table
     // scaled to produce values between 0 and 4096 (for 12-bit DAC)
@@ -371,14 +529,12 @@ int main() {
          sin_table[ii] = float2fix15(2047*sin((float)ii*6.283/(float)sine_table_size));
     }
 
-    int x1;
-    for (x1 = 0; x1 < freq_table_size; x1++){
-         swp_table[x1] = float2fix15(((float)-1/(float)26000) * (x1 - 2600) * (x1 - 2600) + 2000);
+    // Build frequency modulation lookup table
+    for (int x = 0; x < freq_table_size; x++) {
+        swoop_table[x] = float2fix15( 260 * sin((float)3.1415*x/(float)406.25) + 1740 );
     }
-
-    int x2;
-    for (x2 = 0; x2 < freq_table_size; x2++){
-         chp_table[x2] = float2fix15(0.000184 * x2 * x2 + 2000);
+    for (int x = 0; x < freq_table_size; x++) {
+        chirp_table[x] = float2fix15( 0.03015*x*x + 2000 );
     }
 
     // Enable the interrupt for the alarm (we're using Alarm 0)
@@ -391,9 +547,21 @@ int main() {
     timer_hw->alarm[ALARM_NUM] = timer_hw->timerawl + DELAY ;
 
     // Add core 0 threads
+    //pt_add_thread(protothread_core_0) ;
+
+    // Start scheduling core 0 threads
+    //pt_schedule_start ;
+
+    // ================================================================
+    // =========================== END BEEP ===========================
+    // ================================================================
+
+    // Add core 0 threads
     pt_add_thread(protothread_core_0) ;
 
     // Start scheduling core 0 threads
     pt_schedule_start ;
 
 }
+
+// Last edit: 2025.09.12 01:01
