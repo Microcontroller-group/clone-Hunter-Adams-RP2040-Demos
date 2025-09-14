@@ -27,11 +27,15 @@
  *  - RP2040 GND    -->     UART GND
  * 
  * KEYPAD FUNCTIONS
- *  - Button 1 (i ==  1) --> Swoop
- *  - Button 2 (i ==  2) --> Chirp
- *  - Button 3 (i ==  3) --> Silence
- *  - Button * (i == 10) --> Record
- *  - Button # (i == 11) --> Play
+ *  - Button 1 (i ==  1) -->   Swoop (Birdsong 1)
+ *  - Button 2 (i ==  2) -->   Chirp (Birdsong 1)
+ *  - Button 3 (i ==  3) --> Silence (Birdsong 1)
+ *  - Button 4 (i ==  4) -->      S1 (Birdsong 2)
+ *  - Button 5 (i ==  5) -->      S2 (Birdsong 2)
+ *  - Button 6 (i ==  6) -->      S3 (Birdsong 2)
+ *  - Button 7 (i ==  7) -->      S4 (Birdsong 2)
+ *  - Button * (i == 10) -->  Record
+ *  - Button # (i == 11) -->    Play
  */
 
 #include <stdio.h>
@@ -132,6 +136,18 @@ fix15 sin_table[sine_table_size] ;
 fix15 swoop_table[freq_table_size] ;
 fix15 chirp_table[freq_table_size] ;
 
+// Second birdsong frequency lookup table
+// S1  9091/16 = 569
+// S2  2597 silence
+// S3  5844/16 = 366
+// S4  3247/16 = 203
+#define s1_table_size   569
+#define s3_table_size   366
+#define s4_table_size   203
+fix15 s1_table[s1_table_size];
+fix15 s3_table[s3_table_size];
+fix15 s4_table[s4_table_size];
+
 // Values output to DAC
 int DAC_output_0 ;
 int DAC_output_1 ;
@@ -150,11 +166,21 @@ fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 #define BEEP_DURATION           6500
 #define BEEP_REPEAT_INTERVAL    20000
 
+// Second birdsong
+#define S1_DURATION   9091
+#define S2_DURATION   2597
+#define S3_DURATION   5844
+#define S4_DURATION   3247
+
 // State machine variables
 #define IDLE     0
 #define SWOOP    1
 #define CHIRP    2
 #define SILENCE  3
+#define S1       4
+#define S2       5
+#define S3       6
+#define S4       7
 volatile unsigned int BP_STATE = IDLE ;
 volatile unsigned int counter = 0 ;
 
@@ -261,6 +287,109 @@ static void alarm_irq(void) {
         if ( counter == BEEP_DURATION ) {
             BP_STATE = IDLE;
             counter = 0;
+        }
+    } else if ( BP_STATE == S1 ) {
+        // Frequency modulation table lookup
+        freq = fix2int15(s1_table[counter>>4]);
+        phase_incr_main_0 = freq * two32Fs;
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (counter < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (counter > S1_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        counter += 1 ;
+
+        // State transition?
+        if (counter == S1_DURATION) {
+            BP_STATE = IDLE ;
+            counter = 0 ;
+        }
+    } else if ( BP_STATE == S2 ) {
+        counter += 1 ;
+        // State transition?
+        if (counter == S2_DURATION) {
+            BP_STATE = IDLE ;
+            counter = 0 ;
+        }
+    } else if ( BP_STATE == S3 ) {
+        // Frequency modulation table lookup
+        freq = fix2int15(s3_table[counter>>4]);
+        phase_incr_main_0 = freq * two32Fs;
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (counter < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (counter > S3_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        counter += 1 ;
+
+        // State transition?
+        if (counter == S3_DURATION) {
+            BP_STATE = IDLE ;
+            counter = 0 ;
+        }
+    } else if ( BP_STATE == S4 ) {
+        // Frequency modulation table lookup
+        freq = fix2int15(s4_table[counter>>4]);
+        phase_incr_main_0 = freq * two32Fs;
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0  ;
+        DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048 ;
+
+        // Ramp up amplitude
+        if (counter < ATTACK_TIME) {
+            current_amplitude_0 = (current_amplitude_0 + attack_inc) ;
+        }
+        // Ramp down amplitude
+        else if (counter > S4_DURATION - DECAY_TIME) {
+            current_amplitude_0 = (current_amplitude_0 - decay_inc) ;
+        }
+
+        // Mask with DAC control bits
+        DAC_data_0 = (DAC_config_chan_B | (DAC_output_0 & 0xffff))  ;
+
+        // SPI write (no spinlock b/c of SPI buffer)
+        spi_write16_blocking(SPI_PORT, &DAC_data_0, 1) ;
+
+        // Increment the counter
+        counter += 1 ;
+
+        // State transition?
+        if (counter == S4_DURATION) {
+            BP_STATE = IDLE ;
+            counter = 0 ;
         }
     }
 
@@ -385,6 +514,34 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
                     key_seq[song_index] = i;
                     song_index += 1;
                 }
+            } else if ( i == 4 ) {
+                BP_STATE = S1;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
+            } else if ( i == 5 ) {
+                BP_STATE = S2;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
+            } else if ( i == 6 ) {
+                BP_STATE = S3;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
+            } else if ( i == 7 ) {
+                BP_STATE = S4;
+                AC_NEW = 0;
+                if ( RC_STATE == RECORD ) {
+                    key_seq[song_index] = i;
+                    song_index += 1;
+                }
             } else if (i == 10) {
                 RC_STATE = RECORD;
                 AC_NEW = 0;
@@ -415,7 +572,8 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
                     play_index += 1;
                 }
             }
-        } else if ( RC_STATE == RECORD ) {
+        }
+        else if ( RC_STATE == RECORD ) {
         } else if ( RC_STATE == FREE ) {
         }
 
@@ -429,7 +587,7 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
         }
         print_counter += 1;
 
-        PT_YIELD_usec(30000) ;
+        PT_YIELD_usec(30000) ; // 30 microseconds = 0.03 seconds
     }
     // Indicate thread end
     PT_END(pt) ;
@@ -530,11 +688,24 @@ int main() {
     }
 
     // Build frequency modulation lookup table
-    for (int x = 0; x < freq_table_size; x++) {
-        swoop_table[x] = float2fix15( 260 * sin((float)3.1415*x/(float)406.25) + 1740 );
+    // for (int x = 0; x < freq_table_size; x++) {
+    //     swoop_table[x] = float2fix15( 260 * sin((float)3.1415*x/(float)406.25) + 1740 );
+    // }
+    for(int x = 0; x < freq_table_size; x++) {
+        swoop_table[x] = float2fix15( 1700 - 0.0000345*(16*x - 3807)*(16*x - 3807) );
     }
     for (int x = 0; x < freq_table_size; x++) {
-        chirp_table[x] = float2fix15( 0.03015*x*x + 2000 );
+        chirp_table[x] = float2fix15( 0.015*x*x + 2000 );
+    }
+    // Second birdsong
+    for (int x = 0; x < s1_table_size; x++) {
+        s1_table[x] = float2fix15( 5500 - (float)3000*16*x/(float)9091 );
+    }
+    for (int x = 0; x < s3_table_size; x++) {
+        s3_table[x] = float2fix15( 2500 - (float)500*16*x/(float)5844 );
+    }
+    for (int x = 0; x < s4_table_size; x++) {
+        s4_table[x] = float2fix15( 2000 - 0.0001898*(16*x - 1623)*(16*x - 1623) );
     }
 
     // Enable the interrupt for the alarm (we're using Alarm 0)
