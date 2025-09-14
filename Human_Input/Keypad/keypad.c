@@ -698,8 +698,11 @@ int main() {
         chirp_table[x] = float2fix15( 0.015*x*x + 2000 );
     }
     // Second birdsong
-    for (int x = 0; x < s1_table_size; x++) {
-        s1_table[x] = float2fix15( 5500 - (float)3000*16*x/(float)9091 );
+    // for (int x = 0; x < s1_table_size; x++) {
+    //     s1_table[x] = float2fix15( 5500 - (float)3000*16*x/(float)9091 );
+    // }
+    for(int x = 0; x < s1_table_size; x++) {
+        s1_table[x] = float2fix15( 2600 + 0.00005*(16*x - 10000)*(16*x - 10000) );
     }
     for (int x = 0; x < s3_table_size; x++) {
         s3_table[x] = float2fix15( 2500 - (float)500*16*x/(float)5844 );
