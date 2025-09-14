@@ -75,6 +75,10 @@
 // Keypad key mappings
 #define KEY_1_INDEX 1  // Key '1' corresponds to index 0
 #define KEY_2_INDEX 2  // Key '2' corresponds to index 1
+#define KEY_3_INDEX 3  // Key '3' corresponds to index 2
+#define KEY_4_INDEX 4  // Key '4' corresponds to index 3
+#define KEY_5_INDEX 5  // Key '5' corresponds to index 4
+#define KEY_6_INDEX 6  // Key '6' corresponds to index 5
 
 // This thread runs on core 0
 static PT_THREAD (protothread_core_0(struct pt *pt))
@@ -117,6 +121,18 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             } else if (pressed_key == KEY_2_INDEX) {
                 printf("Key '2' pressed! Playing chirp sound...\n");
                 bird_trigger_chirp();
+            } else if (pressed_key == KEY_3_INDEX) {
+                printf("Key '3' pressed! Playing chirp sound...\n");
+                bird_trigger_cardinal_linear_1();
+            } else if (pressed_key == KEY_4_INDEX) {
+                printf("Key '4' pressed! Playing chirp sound...\n");
+                bird_trigger_cardinal_silence();
+            } else if (pressed_key == KEY_5_INDEX) {
+                printf("Key '5' pressed! Playing chirp sound...\n");
+                bird_trigger_cardinal_linear_2();
+            } else if (pressed_key == KEY_6_INDEX) {
+                printf("Key '6' pressed! Playing chirp sound...\n");
+                bird_trigger_cardinal_parabola();
             } else {
                 printf("Key %d pressed (not mapped to bird sounds)\n", pressed_key);
             }

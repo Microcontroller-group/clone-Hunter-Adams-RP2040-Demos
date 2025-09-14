@@ -94,6 +94,83 @@ void bird_chirp_irq(void) {
             BIRD_STATE_0 = IDLE;
             bird_count_0 = 0;
         }
+    } else if (BIRD_STATE_0 == CARDINAL_LINEAR_1) {
+        // Frequency modulation table lookup
+        freq = fix2int15(dds_get_cardinal_linear_1_frequency(bird_count_0>>4));
+        phase_incr_main_0 = freq * two32Fs;
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0;
+        bird_DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048;
+
+        // Update envelope for bird sound
+        audio_envelope_update(bird_count_0);
+
+        // Write to DAC
+        dac_write_channel_b(bird_DAC_output_0);
+
+        // Increment the counter
+        bird_count_0 += 1;
+
+        // State transition?
+        if (bird_count_0 == BEEP_DURATION) {
+            BIRD_STATE_0 = IDLE;
+            bird_count_0 = 0;
+        }
+    } else if (BIRD_STATE_0 == CARDINAL_SILENCE) {
+        // Silence - no sound output
+        current_amplitude_0 = 0;
+        bird_count_0 += 1;
+        if (bird_count_0 == (BEEP_DURATION / 3)) { // Shorter duration for silence
+            BIRD_STATE_0 = IDLE;
+            bird_count_0 = 0;
+        }
+    } else if (BIRD_STATE_0 == CARDINAL_LINEAR_2) {
+        // Frequency modulation table lookup
+        freq = fix2int15(dds_get_cardinal_linear_2_frequency(bird_count_0>>4));
+        phase_incr_main_0 = freq * two32Fs;
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0;
+        bird_DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048;
+
+        // Update envelope for bird sound
+        audio_envelope_update(bird_count_0);
+
+        // Write to DAC
+        dac_write_channel_b(bird_DAC_output_0);
+
+        // Increment the counter
+        bird_count_0 += 1;
+
+        // State transition?
+        if (bird_count_0 == BEEP_DURATION) {
+            BIRD_STATE_0 = IDLE;
+            bird_count_0 = 0;
+        }
+    } else if (BIRD_STATE_0 == CARDINAL_PARABOLA) {
+        // Frequency modulation table lookup
+        freq = fix2int15(dds_get_cardinal_parabola_frequency(bird_count_0>>4));
+        phase_incr_main_0 = freq * two32Fs;
+        // DDS phase and sine table lookup
+        phase_accum_main_0 += phase_incr_main_0;
+        bird_DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
+            sin_table[phase_accum_main_0>>24])) + 2048;
+
+        // Update envelope for bird sound
+        audio_envelope_update(bird_count_0);
+
+        // Write to DAC
+        dac_write_channel_b(bird_DAC_output_0);
+
+        // Increment the counter
+        bird_count_0 += 1;
+
+        // State transition?
+        if (bird_count_0 == BEEP_DURATION) {
+            BIRD_STATE_0 = IDLE;
+            bird_count_0 = 0;
+        }
     } else {
         // IDLE state - no sound
         current_amplitude_0 = 0;
@@ -116,6 +193,42 @@ void bird_trigger_swoop(void) {
 void bird_trigger_chirp(void) {
     if (BIRD_STATE_0 == IDLE) {
         BIRD_STATE_0 = CHIRP;
+        bird_count_0 = 0;
+        current_amplitude_0 = 0;
+    }
+}
+
+// Trigger Cardinal Linear 1 sound (downward sweep)
+void bird_trigger_cardinal_linear_1(void) {
+    if (BIRD_STATE_0 == IDLE) {
+        BIRD_STATE_0 = CARDINAL_LINEAR_1;
+        bird_count_0 = 0;
+        current_amplitude_0 = 0;
+    }
+}
+
+// Trigger Cardinal Silence
+void bird_trigger_cardinal_silence(void) {
+    if (BIRD_STATE_0 == IDLE) {
+        BIRD_STATE_0 = CARDINAL_SILENCE;
+        bird_count_0 = 0;
+        current_amplitude_0 = 0;
+    }
+}
+
+// Trigger Cardinal Linear 2 sound (upward sweep)
+void bird_trigger_cardinal_linear_2(void) {
+    if (BIRD_STATE_0 == IDLE) {
+        BIRD_STATE_0 = CARDINAL_LINEAR_2;
+        bird_count_0 = 0;
+        current_amplitude_0 = 0;
+    }
+}
+
+// Trigger Cardinal Parabola sound (V-shaped curve)
+void bird_trigger_cardinal_parabola(void) {
+    if (BIRD_STATE_0 == IDLE) {
+        BIRD_STATE_0 = CARDINAL_PARABOLA;
         bird_count_0 = 0;
         current_amplitude_0 = 0;
     }

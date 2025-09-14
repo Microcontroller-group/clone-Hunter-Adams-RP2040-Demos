@@ -11,6 +11,9 @@ volatile unsigned int phase_incr_main_0;
 fix15 sin_table[sine_table_size];
 fix15 swoop_table[freq_table_size];
 fix15 chirp_table[freq_table_size];
+fix15 cardinal_linear_1_table[freq_table_size];
+fix15 cardinal_linear_2_table[freq_table_size];
+fix15 cardinal_parabola_table[freq_table_size];
 
 void dds_init(void) {
     // Build the sine lookup table
@@ -26,6 +29,30 @@ void dds_init(void) {
 
     for (int x = 0; x < freq_table_size; x++) {
         chirp_table[x] = float2fix15( 0.03015*x*x + 2000 );
+    }
+    
+    // Cardinal Primitive 1: First Linear (downward sweep) - Key 3
+    for (int x = 0; x < freq_table_size; x++) {
+        float normalized_x = (float)x / freq_table_size;
+        // Linear downward: 7kHz to 4kHz (higher frequency range)
+        float freq = 7000 - 3000 * normalized_x;
+        cardinal_linear_1_table[x] = float2fix15(freq);
+    }
+    
+    // Cardinal Primitive 2: Second Linear (downward sweep) - Key 5
+    for (int x = 0; x < freq_table_size; x++) {
+        float normalized_x = (float)x / freq_table_size;
+        // Linear downward: 2.8kHz to 1.8kHz (inverted from upward)
+        float freq = 2800 - 1000 * normalized_x;
+        cardinal_linear_2_table[x] = float2fix15(freq);
+    }
+    
+    // Cardinal Primitive 3: Parabola (inverted V-shaped curve) - Key 6
+    for (int x = 0; x < freq_table_size; x++) {
+        float normalized_x = (float)x / freq_table_size;
+        // Inverted V-shaped curve: 1.5kHz -> 2kHz -> 1.5kHz
+        float freq = 1500 + 500 * (4 * normalized_x * (1 - normalized_x));
+        cardinal_parabola_table[x] = float2fix15(freq);
     }
     
     // Set default frequency to 400Hz
@@ -44,4 +71,19 @@ fix15 dds_get_swoop_frequency(unsigned int index) {
 fix15 dds_get_chirp_frequency(unsigned int index) {
     if (index >= freq_table_size) index = freq_table_size - 1;
     return chirp_table[index];
+}
+
+fix15 dds_get_cardinal_linear_1_frequency(unsigned int index) {
+    if (index >= freq_table_size) index = freq_table_size - 1;
+    return cardinal_linear_1_table[index];
+}
+
+fix15 dds_get_cardinal_linear_2_frequency(unsigned int index) {
+    if (index >= freq_table_size) index = freq_table_size - 1;
+    return cardinal_linear_2_table[index];
+}
+
+fix15 dds_get_cardinal_parabola_frequency(unsigned int index) {
+    if (index >= freq_table_size) index = freq_table_size - 1;
+    return cardinal_parabola_table[index];
 }

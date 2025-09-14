@@ -30,6 +30,17 @@
 // LED pin
 #define LED 25
 
+// Button pin
+#define BUTTON_PIN 19
+
+// Cardinal sound key mappings (for keypad integration)
+// Key 1: Original swoop sound
+// Key 2: Original chirp sound  
+// Key 3: Cardinal Linear 1 (7kHz to 4kHz downward sweep - higher range)
+// Key 4: Cardinal Silence (brief pause)
+// Key 5: Cardinal Linear 2 (2.8kHz to 1.8kHz downward sweep - inverted)
+// Key 6: Cardinal Parabola (1.5kHz->2kHz->1.5kHz inverted V-shaped curve)
+
 // This thread runs on core 0
 static PT_THREAD (protothread_core_0(struct pt *pt))
 {
@@ -37,13 +48,34 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
     PT_BEGIN(pt);
     
     static int sound_counter = 0;
+    static bool last_button_state = false;
     
     while(1) {
         
         // Toggle LED like a bird's heartbeat
         gpio_put(LED, !gpio_get(LED));
 
-        // Trigger different bird sounds every 3 seconds
+        // Check for button press (GPIO19)
+        bool current_button_state = gpio_get(BUTTON_PIN);
+        
+        // Detect button press (falling edge - button pressed)
+        if (last_button_state && !current_button_state) {
+            printf("Button pressed! Playing Cardinal song sequence...\n");
+            
+            // Play the complete Cardinal song sequence in correct order
+            bird_trigger_cardinal_linear_1();    // Key 3: First linear (downward)
+            sleep_ms(300);  // Wait for linear 1 to complete
+            bird_trigger_cardinal_silence();     // Key 4: Silence
+            sleep_ms(200);  // Wait for silence to complete
+            bird_trigger_cardinal_linear_2();    // Key 5: Second linear (upward)
+            sleep_ms(300);  // Wait for linear 2 to complete
+            bird_trigger_cardinal_parabola();    // Key 6: Parabola (V-shaped)
+            sleep_ms(300);  // Wait for parabola to complete
+        }
+        last_button_state = current_button_state;
+
+        // Trigger different bird sounds every 3 seconds (commented out for button control)
+        /*
         sound_counter++;
         if (sound_counter >= 60) { // 60 * 50ms = 3 seconds
             sound_counter = 0;
@@ -60,6 +92,7 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
                 sound_type = 0;
             }
         }
+        */
 
         // Yield for 50 ms
         PT_YIELD_usec(50000);
@@ -84,6 +117,11 @@ int main() {
     gpio_init(LED);
     gpio_set_dir(LED, GPIO_OUT);
     gpio_put(LED, 0);
+
+    // Initialize button pin (GPIO19) as input with pull-up
+    gpio_init(BUTTON_PIN);
+    gpio_set_dir(BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_PIN);
 
     // Add core 0 threads
     pt_add_thread(protothread_core_0);

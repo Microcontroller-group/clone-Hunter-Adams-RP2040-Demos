@@ -26,6 +26,10 @@
 #define IDLE   0
 #define SWOOP  1
 #define CHIRP  2
+#define CARDINAL_LINEAR_1    3  // First linear (downward sweep)
+#define CARDINAL_SILENCE     4  // Brief pause
+#define CARDINAL_LINEAR_2    5  // Second linear (upward sweep)
+#define CARDINAL_PARABOLA    6  // Parabola (V-shaped curve)
 
 // State machine variables
 extern volatile unsigned int BIRD_STATE_0;
@@ -36,6 +40,10 @@ void bird_generator_init(void);
 void bird_chirp_irq(void);
 void bird_trigger_swoop(void);
 void bird_trigger_chirp(void);
+void bird_trigger_cardinal_linear_1(void);
+void bird_trigger_cardinal_silence(void);
+void bird_trigger_cardinal_linear_2(void);
+void bird_trigger_cardinal_parabola(void);
 void bird_stop_sound(void);
 
 #endif // BIRD_GENERATOR_H
