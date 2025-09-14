@@ -13,6 +13,7 @@
 #define DECAY_TIME              250
 #define SUSTAIN_TIME            6000
 #define BEEP_DURATION           6500
+#define CARDINAL_LINEAR_1_DURATION 7800  // 20% longer than BEEP_DURATION (6500 * 1.2)
 #define BEEP_REPEAT_INTERVAL    20000
 
 // Envelope state variables
@@ -24,5 +25,6 @@ extern fix15 current_amplitude_0;
 // Function prototypes
 void audio_envelope_init(void);
 fix15 audio_envelope_update(unsigned int count);
+fix15 audio_envelope_update_cardinal_linear_1(unsigned int count);
 
 #endif // AUDIO_ENVELOPE_H

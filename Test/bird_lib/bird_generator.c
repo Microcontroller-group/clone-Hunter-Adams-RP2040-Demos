@@ -95,16 +95,19 @@ void bird_chirp_irq(void) {
             bird_count_0 = 0;
         }
     } else if (BIRD_STATE_0 == CARDINAL_LINEAR_1) {
-        // Frequency modulation table lookup
-        freq = fix2int15(dds_get_cardinal_linear_1_frequency(bird_count_0>>4));
+        // Frequency modulation table lookup - scale to use full duration
+        // Map bird_count_0 (0 to CARDINAL_LINEAR_1_DURATION-1) to table index (0 to freq_table_size-1)
+        unsigned int table_index = (bird_count_0 * (freq_table_size - 1)) / (CARDINAL_LINEAR_1_DURATION - 1);
+        if (table_index >= freq_table_size) table_index = freq_table_size - 1;
+        freq = fix2int15(dds_get_cardinal_linear_1_frequency(table_index));
         phase_incr_main_0 = freq * two32Fs;
         // DDS phase and sine table lookup
         phase_accum_main_0 += phase_incr_main_0;
         bird_DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
             sin_table[phase_accum_main_0>>24])) + 2048;
 
-        // Update envelope for bird sound
-        audio_envelope_update(bird_count_0);
+        // Update envelope for bird sound - use special envelope for cardinal linear 1
+        audio_envelope_update_cardinal_linear_1(bird_count_0);
 
         // Write to DAC
         dac_write_channel_b(bird_DAC_output_0);
@@ -112,16 +115,23 @@ void bird_chirp_irq(void) {
         // Increment the counter
         bird_count_0 += 1;
 
-        // State transition?
-        if (bird_count_0 == BEEP_DURATION) {
+        // State transition? (20% longer duration for cardinal linear 1)
+        if (bird_count_0 == CARDINAL_LINEAR_1_DURATION) {
             BIRD_STATE_0 = IDLE;
             bird_count_0 = 0;
         }
     } else if (BIRD_STATE_0 == CARDINAL_SILENCE) {
         // Silence - no sound output
         current_amplitude_0 = 0;
+        
+        // Update envelope (even though amplitude is 0)
+        audio_envelope_update(bird_count_0);
+        
+        // Write silence to DAC (2048 = middle value for 12-bit DAC)
+        dac_write_channel_b(2048);
+        
         bird_count_0 += 1;
-        if (bird_count_0 == (BEEP_DURATION / 3)) { // Shorter duration for silence
+        if (bird_count_0 == 2500) { // 50ms silence duration (2500 interrupts at 50kHz)
             BIRD_STATE_0 = IDLE;
             bird_count_0 = 0;
         }

@@ -28,3 +28,16 @@ fix15 audio_envelope_update(unsigned int count) {
     
     return current_amplitude_0;
 }
+
+fix15 audio_envelope_update_cardinal_linear_1(unsigned int count) {
+    // Ramp up amplitude
+    if (count < ATTACK_TIME) {
+        current_amplitude_0 = (current_amplitude_0 + attack_inc);
+    }
+    // Ramp down amplitude - use the correct duration for cardinal linear 1
+    else if (count > CARDINAL_LINEAR_1_DURATION - DECAY_TIME) {
+        current_amplitude_0 = (current_amplitude_0 - decay_inc);
+    }
+    
+    return current_amplitude_0;
+}

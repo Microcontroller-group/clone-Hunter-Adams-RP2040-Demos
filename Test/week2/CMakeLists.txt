@@ -26,7 +26,7 @@ project(bird_keypad_demo C CXX ASM)
 pico_sdk_init()
 
 # Add executable. Default name is the same as the project name.
-add_executable(bird_keypad_demo main.c)
+add_executable(bird_keypad_demo main.c sound_recorder.c)
 
 # Add the bird_lib source files
 target_sources(bird_keypad_demo PRIVATE

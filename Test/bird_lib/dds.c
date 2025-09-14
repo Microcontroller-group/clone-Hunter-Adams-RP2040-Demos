@@ -34,8 +34,8 @@ void dds_init(void) {
     // Cardinal Primitive 1: First Linear (downward sweep) - Key 3
     for (int x = 0; x < freq_table_size; x++) {
         float normalized_x = (float)x / freq_table_size;
-        // Linear downward: 7kHz to 4kHz (higher frequency range)
-        float freq = 7000 - 3000 * normalized_x;
+        // Linear downward: 8kHz to 2.8kHz (higher frequency range)
+        float freq = 8000 - 5200 * normalized_x;
         cardinal_linear_1_table[x] = float2fix15(freq);
     }
     

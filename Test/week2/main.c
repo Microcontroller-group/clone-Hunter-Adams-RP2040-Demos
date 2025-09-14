@@ -69,6 +69,9 @@
 #include "gpio_config.h"
 #include "keypad_fsm.h"
 
+// Sound recording library
+#include "sound_recorder.h"
+
 // LED pin
 #define LED 25
 
@@ -79,6 +82,8 @@
 #define KEY_4_INDEX 4  // Key '4' corresponds to index 3
 #define KEY_5_INDEX 5  // Key '5' corresponds to index 4
 #define KEY_6_INDEX 6  // Key '6' corresponds to index 5
+#define KEY_10_INDEX 10 // * record
+#define KEY_11_INDEX 11 // # play
 
 // This thread runs on core 0
 static PT_THREAD (protothread_core_0(struct pt *pt))
@@ -115,24 +120,54 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
         if (state_changed && keypad_fsm_is_key_pressed(&fsm)) {
             int pressed_key = keypad_fsm_get_current_key(&fsm);        
 
-            if (pressed_key == KEY_1_INDEX) {
-                printf("Key '1' pressed! Playing swoop sound...\n");
-                bird_trigger_swoop();
-            } else if (pressed_key == KEY_2_INDEX) {
-                printf("Key '2' pressed! Playing chirp sound...\n");
-                bird_trigger_chirp();
-            } else if (pressed_key == KEY_3_INDEX) {
-                printf("Key '3' pressed! Playing chirp sound...\n");
-                bird_trigger_cardinal_linear_1();
-            } else if (pressed_key == KEY_4_INDEX) {
-                printf("Key '4' pressed! Playing chirp sound...\n");
-                bird_trigger_cardinal_silence();
-            } else if (pressed_key == KEY_5_INDEX) {
-                printf("Key '5' pressed! Playing chirp sound...\n");
-                bird_trigger_cardinal_linear_2();
-            } else if (pressed_key == KEY_6_INDEX) {
-                printf("Key '6' pressed! Playing chirp sound...\n");
-                bird_trigger_cardinal_parabola();
+            // Handle recording control keys
+            if (pressed_key == KEY_10_INDEX) {
+                printf("Key '10' pressed! Starting recording...\n");
+                sound_recorder_start_recording();
+            } else if (pressed_key == KEY_11_INDEX) {
+                if (sound_recorder_is_recording()) {
+                    printf("Key '11' pressed! Stopping recording and playing back...\n");
+                    sound_recorder_stop_and_play();
+                } else {
+                    printf("Key '11' pressed! Not currently recording\n");
+                }
+            } 
+            // Handle bird sound keys (1-6)
+            else if (pressed_key >= KEY_1_INDEX && pressed_key <= KEY_6_INDEX) {
+                // If we're recording, record this key press
+                if (sound_recorder_is_recording()) {
+                    sound_recorder_record_key(pressed_key);
+                }
+                
+                // Always play the sound (unless we're in playback mode)
+                if (!sound_recorder_is_playing()) {
+                    switch (pressed_key) {
+                        case KEY_1_INDEX:
+                            printf("Key '1' pressed! Playing swoop sound...\n");
+                            bird_trigger_swoop();
+                            break;
+                        case KEY_2_INDEX:
+                            printf("Key '2' pressed! Playing chirp sound...\n");
+                            bird_trigger_chirp();
+                            break;
+                        case KEY_3_INDEX:
+                            printf("Key '3' pressed! Playing cardinal linear 1...\n");
+                            bird_trigger_cardinal_linear_1();
+                            break;
+                        case KEY_4_INDEX:
+                            printf("Key '4' pressed! Playing cardinal silence...\n");
+                            bird_trigger_cardinal_silence();
+                            break;
+                        case KEY_5_INDEX:
+                            printf("Key '5' pressed! Playing cardinal linear 2...\n");
+                            bird_trigger_cardinal_linear_2();
+                            break;
+                        case KEY_6_INDEX:
+                            printf("Key '6' pressed! Playing cardinal parabola...\n");
+                            bird_trigger_cardinal_parabola();
+                            break;
+                    }
+                }
             } else {
                 printf("Key %d pressed (not mapped to bird sounds)\n", pressed_key);
             }
@@ -145,11 +180,15 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             keypad_fsm_is_key_pressed(&fsm)
         );
 
+        // Update sound recorder state machine
+        sound_recorder_update();
+
         // Print FSM state to terminal for debugging
-        printf("\nKey: %d, State: %s, Pressed: %s", 
+        printf("\nKey: %d, State: %s, Pressed: %s, Recorder: %s", 
                keypad_fsm_get_current_key(&fsm),
                keypad_fsm_state_to_string(keypad_fsm_get_state(&fsm)),
-               keypad_fsm_is_key_pressed(&fsm) ? "YES" : "NO");
+               keypad_fsm_is_key_pressed(&fsm) ? "YES" : "NO",
+               sound_recorder_is_recording() ? "REC" : (sound_recorder_is_playing() ? "PLAY" : "IDLE"));
 
         // Yield for 30ms (same as keypad demo)
         PT_YIELD_usec(30000);
@@ -172,6 +211,9 @@ int main() {
     dds_init();
     audio_envelope_init();
     bird_generator_init();
+    
+    // Initialize sound recorder
+    sound_recorder_init();
 
     // Initialize display system
     display_init();

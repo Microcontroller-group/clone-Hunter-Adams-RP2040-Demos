@@ -66,7 +66,7 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             bird_trigger_cardinal_linear_1();    // Key 3: First linear (downward)
             sleep_ms(300);  // Wait for linear 1 to complete
             bird_trigger_cardinal_silence();     // Key 4: Silence
-            sleep_ms(200);  // Wait for silence to complete
+            sleep_ms(100);  // Wait for silence to complete (50ms + buffer)
             bird_trigger_cardinal_linear_2();    // Key 5: Second linear (upward)
             sleep_ms(300);  // Wait for linear 2 to complete
             bird_trigger_cardinal_parabola();    // Key 6: Parabola (V-shaped)
