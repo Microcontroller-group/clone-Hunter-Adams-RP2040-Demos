@@ -80,20 +80,20 @@ int prev_key = 0;
 #define PRESSED            2
 #define MAYBE_NOT_PRESSED  3
 volatile unsigned int DB_STATE = NOT_PRESSED;
-volatile unsigned int AC_NEW = 1;
+volatile unsigned int AC_NEW = 1;  // Accept new input
 
 // Rercord FSM
-#define FREE    0
-#define RECORD  1
-#define PLAY    2
+#define FREE    0  // Free mode (not recording and not playing)
+#define RECORD  1  // Record mode
+#define PLAY    2  // Play mode
 volatile unsigned int RC_STATE = FREE;
-#define MAX_SONG_LENGTH  100
+#define MAX_SONG_LENGTH  100  // Maximum input sequence length
 int key_seq[MAX_SONG_LENGTH] = {0};
-int song_index = 0;
-int play_index = 0;
+int song_index = 0;  // For record mode
+int play_index = 0;  // For play mode
 
 // Print counter
-volatile unsigned int print_counter = 0;
+volatile unsigned int print_counter = 0;  // Counter to slow down serial print
 
 // ================================================================
 // ========================== START BEEP ==========================
@@ -126,13 +126,13 @@ volatile unsigned int phase_accum_main_0;
 volatile unsigned int phase_incr_main_0;
 
 // Frequency modulation
-volatile unsigned int freq;
+volatile unsigned int freq;  // Current frequency
 unsigned int two32Fs = two32/Fs;
 
 // DDS sine table (populated in main())
 #define sine_table_size 256
 fix15 sin_table[sine_table_size] ;
-#define freq_table_size 407
+#define freq_table_size 407  // For swoop and chirp, reduce size by 16
 fix15 swoop_table[freq_table_size] ;
 fix15 chirp_table[freq_table_size] ;
 
@@ -141,9 +141,9 @@ fix15 chirp_table[freq_table_size] ;
 // S2  2597 silence
 // S3  5844/16 = 366
 // S4  3247/16 = 203
-#define s1_table_size   569
-#define s3_table_size   366
-#define s4_table_size   203
+#define s1_table_size   569  // For s1, reduce size by 16
+#define s3_table_size   366  // For s3, reduce size by 16
+#define s4_table_size   203  // For s4, reduce size by 16
 fix15 s1_table[s1_table_size];
 fix15 s3_table[s3_table_size];
 fix15 s4_table[s4_table_size];
@@ -163,14 +163,14 @@ fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 #define ATTACK_TIME             250
 #define DECAY_TIME              250
 #define SUSTAIN_TIME            6000
-#define BEEP_DURATION           6500
+#define BEEP_DURATION           6500  // Duration for swoop and chirp
 #define BEEP_REPEAT_INTERVAL    20000
 
 // Second birdsong
-#define S1_DURATION   9091
-#define S2_DURATION   2597
-#define S3_DURATION   5844
-#define S4_DURATION   3247
+#define S1_DURATION   9091 // Duration for s1
+#define S2_DURATION   2597 // Duration for s2 (silence)
+#define S3_DURATION   5844 // Duration for s3
+#define S4_DURATION   3247 // Duration for s4
 
 // State machine variables
 #define IDLE     0
@@ -182,7 +182,7 @@ fix15 current_amplitude_1 = 0 ;         // current amplitude (modified in ISR)
 #define S3       6
 #define S4       7
 volatile unsigned int BP_STATE = IDLE ;
-volatile unsigned int counter = 0 ;
+volatile unsigned int counter = 0 ;  // Count time (increment in ISR)
 
 // SPI data
 uint16_t DAC_data_1 ; // output value
@@ -220,8 +220,8 @@ static void alarm_irq(void) {
 
     if ( BP_STATE == SWOOP ) {
         // Frequency modulation table lookup
-        freq = fix2int15(swoop_table[counter>>4]);
-        phase_incr_main_0 = freq * two32Fs;
+        freq = fix2int15(swoop_table[counter>>4]);  // Get current frequency
+        phase_incr_main_0 = freq * two32Fs;  // Compute phase increment
         // DDS phase and sine table lookup
         phase_accum_main_0 += phase_incr_main_0  ;
         DAC_output_0 = fix2int15(multfix15(current_amplitude_0,
@@ -492,6 +492,7 @@ static PT_THREAD (protothread_core_0(struct pt *pt))
             }
         }
 
+        // State change from keypad input
         if ( DB_STATE == PRESSED && AC_NEW == 1 && BP_STATE == IDLE ) {
             if ( i == 1 ) {
                 BP_STATE = SWOOP;
@@ -737,5 +738,3 @@ int main() {
     pt_schedule_start ;
 
 }
-
-// Last edit: 2025.09.12 01:01
