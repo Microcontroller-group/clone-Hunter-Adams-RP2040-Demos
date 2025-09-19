@@ -40,7 +40,6 @@ unsigned short * address_pointer = &DAC_data[0] ;
 #define PIN_SCK  6
 #define PIN_MOSI 7
 #define SPI_PORT spi0
-#define LED      25
 
 // Number of DMA transfers per event
 const uint32_t transfer_count = sine_table_size ;
@@ -62,9 +61,6 @@ int main() {
     gpio_set_function(PIN_CS, GPIO_FUNC_SPI) ;
     gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
-    gpio_init(LED);
-    gpio_set_dir(LED, GPIO_OUT);
-    gpio_put(LED, 1);
 
     // Build sine table and DAC data table
     int i ;

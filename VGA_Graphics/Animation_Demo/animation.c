@@ -73,22 +73,12 @@ int ball_r_int =   4;
 int peg_r_int =    6;
 int peg_x_int =  320;
 int peg_y_int =  240;
+float bounciness_float = 0.5;
 fix15 ball_r;
 fix15 peg_r;
 fix15 peg_x;
 fix15 peg_y;
-
-// Boid on core 0
-fix15 boid0_x ;
-fix15 boid0_y ;
-fix15 boid0_vx ;
-fix15 boid0_vy ;
-
-// Boid on core 1
-fix15 boid1_x ;
-fix15 boid1_y ;
-fix15 boid1_vx ;
-fix15 boid1_vy ;
+fix15 bounciness;
 
 // Ball on core 0
 fix15 ball0_x;
@@ -96,52 +86,11 @@ fix15 ball0_y;
 fix15 ball0_vx;
 fix15 ball0_vy;
 
-// Create a boid
-void spawnBoid(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
-{
-  // Start in center of screen
-  *x = int2fix15(320) ;
-  *y = int2fix15(240) ;
-  // Choose left or right
-  if (direction) *vx = int2fix15(3) ;
-  else *vx = int2fix15(-3) ;
-  // Moving down
-  *vy = int2fix15(1) ;
-}
-
-// Draw the boundaries
-void drawArena() {
-  drawVLine(100, 100, 280, WHITE) ;
-  drawVLine(540, 100, 280, WHITE) ;
-  drawHLine(100, 100, 440, WHITE) ;
-  drawHLine(100, 380, 440, WHITE) ;
-}
-
-// Detect wallstrikes, update velocity and position
-void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy)
-{
-  // Reverse direction if we've hit a wall
-  if (hitTop(*y)) {
-    *vy = (-*vy) ;
-    *y  = (*y + int2fix15(5)) ;
-  }
-  if (hitBottom(*y)) {
-    *vy = (-*vy) ;
-    *y  = (*y - int2fix15(5)) ;
-  } 
-  if (hitRight(*x)) {
-    *vx = (-*vx) ;
-    *x  = (*x - int2fix15(5)) ;
-  }
-  if (hitLeft(*x)) {
-    *vx = (-*vx) ;
-    *x  = (*x + int2fix15(5)) ;
-  } 
-
-  // Update position using velocity
-  *x = *x + *vx ;
-  *y = *y + *vy ;
-}
+// Ball on core 1
+fix15 ball1_x;
+fix15 ball1_y;
+fix15 ball1_vx;
+fix15 ball1_vy;
 
 // Create ball
 void createBall(fix15* x, fix15* y, fix15* vx, fix15* vy)
@@ -176,7 +125,19 @@ void moveBall(fix15* x, fix15* y, fix15* vx, fix15* vy, fix15 g)
       //ball.vx = ball.vx + (normal_x * intermediate_term)
       *vx = *vx + multfix15(normal_x, intermediate_term);
       *vy = *vy + multfix15(normal_y, intermediate_term);
+      *vx = multfix15(*vx, bounciness);
+      *vy = multfix15(*vy, bounciness);
     }
+  }
+
+  // Hit walls
+  if ( (fix2int15(*x) < 0) || (fix2int15(*x) > 640) )
+  {
+    *vx = -*vx;
+  }
+  if ( fix2int15(*y) < 0 )
+  {
+    *vy = -*vy;
   }
 
   // Ball reborn
@@ -237,9 +198,6 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     static int begin_time ;
     static int spare_time ;
 
-    // // Spawn a boid
-    // spawnBoid(&boid0_x, &boid0_y, &boid0_vx, &boid0_vy, 0);
-
     // Create a ball
     createBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy);
 
@@ -280,20 +238,22 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
     static int begin_time ;
     static int spare_time ;
 
-    // Spawn a boid
-    // spawnBoid(&boid1_x, &boid1_y, &boid1_vx, &boid1_vy, 1);
+    // Create a ball
+    createBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy);
 
     while(1) {
       // Measure time at start of thread
       begin_time = time_us_32() ;      
-      // erase boid
-      // drawRect(fix2int15(boid1_x), fix2int15(boid1_y), 2, 2, BLACK);
-      // update boid's position and velocity
-      // wallsAndEdges(&boid1_x, &boid1_y, &boid1_vx, &boid1_vy) ;
-      // draw the boid at its new position
-      // drawRect(fix2int15(boid1_x), fix2int15(boid1_y), 2, 2, color); 
+      // Erase ball
+      fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, BLACK);
+      // Update ball position and velocity
+      moveBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy, g); 
+      // Draw the ball at new position
+      fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, RED);
+      // Draw peg
+      fillCircle(320, 240, 6, GREEN);
       // delay in accordance with frame rate
-      // spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
+      spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
       PT_YIELD_usec(spare_time) ;
      // NEVER exit while
@@ -330,6 +290,7 @@ int main(){
   peg_r = int2fix15(peg_r_int);
   peg_x = int2fix15(peg_x_int);
   peg_y = int2fix15(peg_y_int);
+  bounciness = float2fix15(bounciness_float);
 
   // start core 1 
   multicore_reset_core1();
