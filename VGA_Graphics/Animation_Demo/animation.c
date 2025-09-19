@@ -6,13 +6,13 @@
  * Through a serial interface, the user can change the ball color.
  *
  * HARDWARE CONNECTIONS
-  - GPIO 16 ---> VGA Hsync
-  - GPIO 17 ---> VGA Vsync
-  - GPIO 18 ---> VGA Green lo-bit --> 470 ohm resistor --> VGA_Green
-  - GPIO 19 ---> VGA Green hi_bit --> 330 ohm resistor --> VGA_Green
-  - GPIO 20 ---> 330 ohm resistor ---> VGA-Blue
-  - GPIO 21 ---> 330 ohm resistor ---> VGA-Red
-  - RP2040 GND ---> VGA-GND
+  - GPIO 16 ---> Pin 21 ---> VGA Hsync
+  - GPIO 17 ---> Pin 22 ---> VGA Vsync
+  - GPIO 18 ---> Pin 24 ---> VGA Green lo-bit --> 470 ohm resistor --> VGA_Green
+  - GPIO 19 ---> Pin 25 ---> VGA Green hi_bit --> 330 ohm resistor --> VGA_Green
+  - GPIO 20 ---> Pin 26 ---> 330 ohm resistor ---> VGA-Blue
+  - GPIO 21 ---> Pin 27 ---> 330 ohm resistor ---> VGA-Red
+  - RP2040 GND ---> Pin 23 ---> VGA-GND
  *
  * RESOURCES USED
  *  - PIO state machines 0, 1, and 2 on PIO instance 0
@@ -50,6 +50,7 @@ typedef signed int fix15 ;
 #define fix2int15(a) ((int)(a >> 15))
 #define char2fix15(a) (fix15)(((fix15)(a)) << 15)
 #define divfix(a,b) (fix15)(div_s64s64( (((signed long long)(a)) << 15), ((signed long long)(b))))
+#define sqrtfix(a) (float2fix15(sqrt(fix2float15(a))))
 
 // Wall detection
 #define hitBottom(b) (b>int2fix15(380))
@@ -63,6 +64,20 @@ typedef signed int fix15 ;
 // the color of the boid
 char color = WHITE ;
 
+// Gravity parameter
+float g_float = 5.0;
+fix15 g;
+
+// Ball and peg parameters
+int ball_r_int =   4;
+int peg_r_int =    6;
+int peg_x_int =  320;
+int peg_y_int =  240;
+fix15 ball_r;
+fix15 peg_r;
+fix15 peg_x;
+fix15 peg_y;
+
 // Boid on core 0
 fix15 boid0_x ;
 fix15 boid0_y ;
@@ -74,6 +89,12 @@ fix15 boid1_x ;
 fix15 boid1_y ;
 fix15 boid1_vx ;
 fix15 boid1_vy ;
+
+// Ball on core 0
+fix15 ball0_x;
+fix15 ball0_y;
+fix15 ball0_vx;
+fix15 ball0_vy;
 
 // Create a boid
 void spawnBoid(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
@@ -122,6 +143,59 @@ void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy)
   *y = *y + *vy ;
 }
 
+// Create ball
+void createBall(fix15* x, fix15* y, fix15* vx, fix15* vy)
+{
+  // Start in center top
+  *x = int2fix15(320);
+  *y = int2fix15(0);
+  *vx = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+  *vy = int2fix15(0);
+}
+
+// Update ball position and velocity
+void moveBall(fix15* x, fix15* y, fix15* vx, fix15* vy, fix15 g)
+{
+  // Peg collision
+  fix15 dx = *x - peg_x;
+  fix15 dy = *y - peg_y;
+  if ( (abs(dx) < ball_r + peg_r) && (abs(dy) < ball_r + peg_r) )
+  {
+    fix15 distance = sqrtfix(multfix15(dx, dx) + multfix15(dy, dy));
+
+    fix15 normal_x = divfix(dx, distance);
+    fix15 normal_y = divfix(dy, distance);
+
+    fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x,  *vx) + multfix15(normal_y, *vy)));
+
+    if ( intermediate_term > int2fix15(0))
+    {
+      //ball.x = peg.x + (normal_x * (distance+1))
+      *x = peg_x + multfix15(normal_x, (distance + int2fix15(1)));
+      *y = peg_y + multfix15(normal_y, (distance + int2fix15(1)));
+      //ball.vx = ball.vx + (normal_x * intermediate_term)
+      *vx = *vx + multfix15(normal_x, intermediate_term);
+      *vy = *vy + multfix15(normal_y, intermediate_term);
+    }
+  }
+
+  // Ball reborn
+  if ( fix2int15(*y) > 470 )
+  {
+    *x = int2fix15(320);
+    *y = int2fix15(0);
+    *vx = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+    *vy = int2fix15(0);
+  }
+
+  // Gravity
+  *vy = *vy + g;
+
+  // Update position
+  *x = *x + *vx;
+  *y = *y + *vy;
+}
+
 // ==================================================
 // === users serial input thread
 // ==================================================
@@ -163,20 +237,29 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     static int begin_time ;
     static int spare_time ;
 
-    // Spawn a boid
-    spawnBoid(&boid0_x, &boid0_y, &boid0_vx, &boid0_vy, 0);
+    // // Spawn a boid
+    // spawnBoid(&boid0_x, &boid0_y, &boid0_vx, &boid0_vy, 0);
+
+    // Create a ball
+    createBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy);
+
+    // Check screen dimensions
+    // fillCircle(   0,   0, 10, WHITE );
+    // fillCircle( 640,   0, 10,   RED );
+    // fillCircle( 640, 480, 10, GREEN );
+    // fillCircle(   0, 480, 10,  BLUE );
 
     while(1) {
       // Measure time at start of thread
       begin_time = time_us_32() ;      
-      // erase boid
-      drawRect(fix2int15(boid0_x), fix2int15(boid0_y), 2, 2, BLACK);
-      // update boid's position and velocity
-      wallsAndEdges(&boid0_x, &boid0_y, &boid0_vx, &boid0_vy) ;
-      // draw the boid at its new position
-      drawRect(fix2int15(boid0_x), fix2int15(boid0_y), 2, 2, color); 
-      // draw the boundaries
-      drawArena() ;
+      // Erase ball
+      fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, BLACK);
+      // Update ball position and velocity
+      moveBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, g); 
+      // Draw the ball at new position
+      fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, BLUE);
+      // Draw peg
+      fillCircle(320, 240, 6, GREEN);
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -198,19 +281,19 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
     static int spare_time ;
 
     // Spawn a boid
-    spawnBoid(&boid1_x, &boid1_y, &boid1_vx, &boid1_vy, 1);
+    // spawnBoid(&boid1_x, &boid1_y, &boid1_vx, &boid1_vy, 1);
 
     while(1) {
       // Measure time at start of thread
       begin_time = time_us_32() ;      
       // erase boid
-      drawRect(fix2int15(boid1_x), fix2int15(boid1_y), 2, 2, BLACK);
+      // drawRect(fix2int15(boid1_x), fix2int15(boid1_y), 2, 2, BLACK);
       // update boid's position and velocity
-      wallsAndEdges(&boid1_x, &boid1_y, &boid1_vx, &boid1_vy) ;
+      // wallsAndEdges(&boid1_x, &boid1_y, &boid1_vx, &boid1_vy) ;
       // draw the boid at its new position
-      drawRect(fix2int15(boid1_x), fix2int15(boid1_y), 2, 2, color); 
+      // drawRect(fix2int15(boid1_x), fix2int15(boid1_y), 2, 2, color); 
       // delay in accordance with frame rate
-      spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
+      // spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
       PT_YIELD_usec(spare_time) ;
      // NEVER exit while
@@ -240,6 +323,13 @@ int main(){
 
   // initialize VGA
   initVGA() ;
+  
+  // Convert parameters
+  g = float2fix15(g_float/10);
+  ball_r = int2fix15(ball_r_int);
+  peg_r = int2fix15(peg_r_int);
+  peg_x = int2fix15(peg_x_int);
+  peg_y = int2fix15(peg_y_int);
 
   // start core 1 
   multicore_reset_core1();
