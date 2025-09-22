@@ -132,18 +132,16 @@ unsigned int two32Fs = two32/Fs;
 // DDS sine table (populated in main())
 #define sine_table_size 256
 fix15 sin_table[sine_table_size] ;
-#define freq_table_size 407  // For swoop and chirp, reduce size by 16
+
+// First birdsong frequency lookup table
+#define freq_table_size 407  // 6500/16 = 407
 fix15 swoop_table[freq_table_size] ;
 fix15 chirp_table[freq_table_size] ;
 
 // Second birdsong frequency lookup table
-// S1  9091/16 = 569
-// S2  2597 silence
-// S3  5844/16 = 366
-// S4  3247/16 = 203
-#define s1_table_size   569  // For s1, reduce size by 16
-#define s3_table_size   366  // For s3, reduce size by 16
-#define s4_table_size   203  // For s4, reduce size by 16
+#define s1_table_size   569  // 9091/16 = 569
+#define s3_table_size   366  // 5844/16 = 366
+#define s4_table_size   203  // 3247/16 = 203
 fix15 s1_table[s1_table_size];
 fix15 s3_table[s3_table_size];
 fix15 s4_table[s4_table_size];
@@ -689,19 +687,13 @@ int main() {
     }
 
     // Build frequency modulation lookup table
-    // for (int x = 0; x < freq_table_size; x++) {
-    //     swoop_table[x] = float2fix15( 260 * sin((float)3.1415*x/(float)406.25) + 1740 );
-    // }
     for(int x = 0; x < freq_table_size; x++) {
         swoop_table[x] = float2fix15( 1700 - 0.0000345*(16*x - 3807)*(16*x - 3807) );
     }
     for (int x = 0; x < freq_table_size; x++) {
-        chirp_table[x] = float2fix15( 0.015*x*x + 2000 );
+        chirp_table[x] = float2fix15( 0.00005859*(16*x)*(16*x) + 2000 );
     }
-    // Second birdsong
-    // for (int x = 0; x < s1_table_size; x++) {
-    //     s1_table[x] = float2fix15( 5500 - (float)3000*16*x/(float)9091 );
-    // }
+
     for(int x = 0; x < s1_table_size; x++) {
         s1_table[x] = float2fix15( 2600 + 0.00005*(16*x - 10000)*(16*x - 10000) );
     }
