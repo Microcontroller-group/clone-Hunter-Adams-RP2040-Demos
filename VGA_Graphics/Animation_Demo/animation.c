@@ -57,6 +57,10 @@ unsigned short DAC_data[sine_table_size] ;
 // Pointer to the address of the DAC data table
 unsigned short * address_pointer_dma = &DAC_data[0] ;
 
+// DMA channel variables (now global for collision-triggered DMA)
+int data_chan;
+int ctrl_chan;
+
 // A-channel, 1x, active
 #define DAC_config_chan_A 0b0011000000000000
 
@@ -161,6 +165,9 @@ void moveBall(fix15* x, fix15* y, fix15* vx, fix15* vy, fix15 g)
       *vy = *vy + multfix15(normal_y, intermediate_term);
       *vx = multfix15(*vx, bounciness);
       *vy = multfix15(*vy, bounciness);
+
+      // Trigger DMA on collision
+      dma_start_channel_mask(1u << ctrl_chan);
     }
   }
 
@@ -339,9 +346,9 @@ int main(){
         DAC_data[i] = DAC_config_chan_A | (raw_sin[i] & 0x0fff) ;
     }
 
-    // Select DMA channels
-    int data_chan = dma_claim_unused_channel(true);;
-    int ctrl_chan = dma_claim_unused_channel(true);;
+    // Select DMA channels (now global)
+    data_chan = dma_claim_unused_channel(true);
+    ctrl_chan = dma_claim_unused_channel(true);
 
     // Setup the control channel
     dma_channel_config c = dma_channel_get_default_config(ctrl_chan);   // default configs
@@ -370,7 +377,7 @@ int main(){
     // 0x3b means timer0 (see SDK manual)
     channel_config_set_dreq(&c2, 0x3b);                                 // DREQ paced by timer 0
     // chain to the controller DMA channel
-    channel_config_set_chain_to(&c2, ctrl_chan);                        // Chain to control channel
+    // channel_config_set_chain_to(&c2, ctrl_chan);                        // Chain to control channel
 
 
     dma_channel_configure(
@@ -384,7 +391,7 @@ int main(){
 
 
     // start the control channel
-    dma_start_channel_mask(1u << ctrl_chan) ;
+    // dma_start_channel_mask(1u << ctrl_chan) ;
 
     // Exit main.
     // No code executing!!
@@ -418,4 +425,4 @@ int main(){
 
   // start scheduler
   pt_schedule_start ;
-} 
+}
