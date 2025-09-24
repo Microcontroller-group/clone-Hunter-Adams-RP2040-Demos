@@ -103,15 +103,15 @@ typedef signed int fix15 ;
 char color = WHITE ;
 
 // Gravity parameter
-float g_float = 5.0;
+float g_float = 0.75;
 fix15 g;
 
 // Ball and peg parameters
 int ball_r_int =   4;
 int peg_r_int =    6;
 int peg_x_int =  320;
-int peg_y_int =  240;
-float bounciness_float = 0.5;
+int peg_y_int =  120;
+float bounciness_float = 0.8;
 fix15 ball_r;
 fix15 peg_r;
 fix15 peg_x;
@@ -258,7 +258,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // Draw the ball at new position
       fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, BLUE);
       // Draw peg
-      fillCircle(320, 240, 6, GREEN);
+      fillCircle(peg_x_int, peg_y_int, 6, GREEN);
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -292,7 +292,7 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       // Draw the ball at new position
       fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, RED);
       // Draw peg
-      fillCircle(320, 240, 6, GREEN);
+      fillCircle(peg_x_int, peg_y_int, 6, GREEN);
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -408,7 +408,7 @@ int main(){
   initVGA() ;
   
   // Convert parameters
-  g = float2fix15(g_float/10);
+  g = float2fix15(g_float);
   ball_r = int2fix15(ball_r_int);
   peg_r = int2fix15(peg_r_int);
   peg_x = int2fix15(peg_x_int);
@@ -420,8 +420,8 @@ int main(){
   multicore_launch_core1(&core1_main);
 
   // add threads
-  pt_add_thread(protothread_serial);
-  pt_add_thread(protothread_anim);
+  // pt_add_thread(protothread_serial);
+  // pt_add_thread(protothread_anim);
 
   // start scheduler
   pt_schedule_start ;
