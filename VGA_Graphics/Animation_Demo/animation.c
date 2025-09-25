@@ -104,50 +104,68 @@ char ball_color_0 = WHITE ;
 char ball_color_1 = BLUE ;
 char peg_color = GREEN ;
 
-// Gravity parameter
+// Physics parameter
 float g_float = 0.75;
 fix15 g;
+float bounciness_float = 0.8;
+fix15 bounciness;
 
 // Ball and peg parameters
 int ball_r_int =   4;
 int peg_r_int =    6;
-int peg_x_int =  320;
-int peg_y_int =  120;
-float bounciness_float = 0.8;
 fix15 ball_r;
 fix15 peg_r;
-fix15 peg_x;
-fix15 peg_y;
-fix15 bounciness;
+
+// Peg position
+int peg_x_int[1];
+int peg_y_int[1];
+fix15 peg_x[1];
+fix15 peg_y[1];
+
+// Create peg
+void createPeg()
+{
+  peg_x_int[0] = 320;
+  peg_y_int[0] = 120;
+}
 
 // Ball on core 0
-fix15 ball0_x;
-fix15 ball0_y;
-fix15 ball0_vx;
-fix15 ball0_vy;
+fix15 ball0_x[1];
+fix15 ball0_y[1];
+fix15 ball0_vx[1];
+fix15 ball0_vy[1];
 
 // Ball on core 1
-fix15 ball1_x;
-fix15 ball1_y;
-fix15 ball1_vx;
-fix15 ball1_vy;
+fix15 ball1_x[1];
+fix15 ball1_y[1];
+fix15 ball1_vx[1];
+fix15 ball1_vy[1];
 
 // Create ball
-void createBall(fix15* x, fix15* y, fix15* vx, fix15* vy)
+void createBall0()
 {
   // Start in center top
-  *x = int2fix15(320);
-  *y = int2fix15(0);
-  *vx = ((fix15)(rand() & 0xffff) >> 1) - 16384;
-  *vy = int2fix15(0);
+  ball0_x[0] = int2fix15(320);
+  ball0_y[0] = int2fix15(0);
+  ball0_vx[0] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+  ball0_vy[0] = int2fix15(0);
+}
+
+void createBall1()
+{
+  // Start in center top
+  ball1_x[0] = int2fix15(320);
+  ball1_y[0] = int2fix15(0);
+  ball1_vx[0] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+  ball1_vy[0] = int2fix15(0);
 }
 
 // Update ball position and velocity
-void moveBall(fix15* x, fix15* y, fix15* vx, fix15* vy, fix15 g)
+static inline void moveBall0()
 {
   // Peg collision
-  fix15 dx = *x - peg_x;
-  fix15 dy = *y - peg_y;
+  fix15 dx = ball0_x[0] - peg_x[0];
+  fix15 dy = ball0_y[0] - peg_y[0];
   if ( (abs(dx) < ball_r + peg_r) && (abs(dy) < ball_r + peg_r) )
   {
     fix15 distance = sqrtfix(multfix15(dx, dx) + multfix15(dy, dy));
@@ -155,18 +173,18 @@ void moveBall(fix15* x, fix15* y, fix15* vx, fix15* vy, fix15 g)
     fix15 normal_x = divfix(dx, distance);
     fix15 normal_y = divfix(dy, distance);
 
-    fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x,  *vx) + multfix15(normal_y, *vy)));
+    fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x,  ball0_vx[0]) + multfix15(normal_y, ball0_vy[0])));
 
     if ( intermediate_term > int2fix15(0))
     {
       //ball.x = peg.x + (normal_x * (distance+1))
-      *x = peg_x + multfix15(normal_x, (distance + int2fix15(1)));
-      *y = peg_y + multfix15(normal_y, (distance + int2fix15(1)));
+      ball0_x[0] = peg_x[0] + multfix15(normal_x, (distance + int2fix15(1)));
+      ball0_y[0] = peg_y[0] + multfix15(normal_y, (distance + int2fix15(1)));
       //ball.vx = ball.vx + (normal_x * intermediate_term)
-      *vx = *vx + multfix15(normal_x, intermediate_term);
-      *vy = *vy + multfix15(normal_y, intermediate_term);
-      *vx = multfix15(*vx, bounciness);
-      *vy = multfix15(*vy, bounciness);
+      ball0_vx[0] = ball0_vx[0] + multfix15(normal_x, intermediate_term);
+      ball0_vy[0] = ball0_vy[0] + multfix15(normal_y, intermediate_term);
+      ball0_vx[0] = multfix15(ball0_vx[0], bounciness);
+      ball0_vy[0] = multfix15(ball0_vy[0], bounciness);
 
       // Trigger DMA on collision
       dma_start_channel_mask(1u << ctrl_chan);
@@ -174,30 +192,87 @@ void moveBall(fix15* x, fix15* y, fix15* vx, fix15* vy, fix15 g)
   }
 
   // Hit walls
-  if ( (fix2int15(*x) < 0) || (fix2int15(*x) > 640) )
+  if ( (fix2int15(ball0_x[0]) < 0) || (fix2int15(ball0_x[0]) > 640) )
   {
-    *vx = -*vx;
+    ball0_vx[0] = -ball0_vx[0];
   }
-  if ( fix2int15(*y) < 0 )
+  if ( fix2int15(ball0_y[0]) < 0 )
   {
-    *vy = -*vy;
+    ball0_vy[0] = -ball0_vy[0];
   }
 
   // Ball reborn
-  if ( fix2int15(*y) > 470 )
+  if ( fix2int15(ball0_y[0]) > 470 )
   {
-    *x = int2fix15(320);
-    *y = int2fix15(0);
-    *vx = ((fix15)(rand() & 0xffff) >> 1) - 16384;
-    *vy = int2fix15(0);
+    ball0_x[0] = int2fix15(320);
+    ball0_y[0] = int2fix15(0);
+    ball0_vx[0] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+    ball0_vy[0] = int2fix15(0);
   }
 
   // Gravity
-  *vy = *vy + g;
+  ball0_vy[0] = ball0_vy[0] + g;
 
   // Update position
-  *x = *x + *vx;
-  *y = *y + *vy;
+  ball0_x[0] = ball0_x[0] + ball0_vx[0];
+  ball0_y[0] = ball0_y[0] + ball0_vy[0];
+}
+
+static inline void moveBall1()
+{
+  // Peg collision
+  fix15 dx = ball1_x[0] - peg_x[0];
+  fix15 dy = ball1_y[0] - peg_y[0];
+  if ( (abs(dx) < ball_r + peg_r) && (abs(dy) < ball_r + peg_r) )
+  {
+    fix15 distance = sqrtfix(multfix15(dx, dx) + multfix15(dy, dy));
+
+    fix15 normal_x = divfix(dx, distance);
+    fix15 normal_y = divfix(dy, distance);
+
+    fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x,  ball1_vx[0]) + multfix15(normal_y, ball1_vy[0])));
+
+    if ( intermediate_term > int2fix15(0))
+    {
+      //ball.x = peg.x + (normal_x * (distance+1))
+      ball1_x[0] = peg_x[0] + multfix15(normal_x, (distance + int2fix15(1)));
+      ball1_y[0] = peg_y[0] + multfix15(normal_y, (distance + int2fix15(1)));
+      //ball.vx = ball.vx + (normal_x * intermediate_term)
+      ball1_vx[0] = ball1_vx[0] + multfix15(normal_x, intermediate_term);
+      ball1_vy[0] = ball1_vy[0] + multfix15(normal_y, intermediate_term);
+      ball1_vx[0] = multfix15(ball1_vx[0], bounciness);
+      ball1_vy[0] = multfix15(ball1_vy[0], bounciness);
+
+      // Trigger DMA on collision
+      dma_start_channel_mask(1u << ctrl_chan);
+    }
+  }
+
+  // Hit walls
+  if ( (fix2int15(ball1_x[0]) < 0) || (fix2int15(ball1_x[0]) > 640) )
+  {
+    ball1_vx[0] = -ball1_vx[0];
+  }
+  if ( fix2int15(ball1_y[0]) < 0 )
+  {
+    ball1_vy[0] = -ball1_vy[0];
+  }
+
+  // Ball reborn
+  if ( fix2int15(ball1_y[0]) > 470 )
+  {
+    ball1_x[0] = int2fix15(320);
+    ball1_y[0] = int2fix15(0);
+    ball1_vx[0] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+    ball1_vy[0] = int2fix15(0);
+  }
+
+  // Gravity
+  ball1_vy[0] = ball1_vy[0] + g;
+
+  // Update position
+  ball1_x[0] = ball1_x[0] + ball1_vx[0];
+  ball1_y[0] = ball1_y[0] + ball1_vy[0];
 }
 
 // ==================================================
@@ -242,7 +317,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     static int spare_time ;
 
     // Create a ball
-    createBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy);
+    createBall0();
 
     // Check screen dimensions
     // fillCircle(   0,   0, 10, WHITE );
@@ -254,13 +329,13 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // Measure time at start of thread
       begin_time = time_us_32() ;      
       // Erase ball
-      fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, BLACK);
+      fillCircle(fix2int15(ball0_x[0]), fix2int15(ball0_y[0]), 4, BLACK);
       // Update ball position and velocity
-      moveBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, g); 
+      moveBall0(); 
       // Draw the ball at new position
-      fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, ball_color_0);
+      fillCircle(fix2int15(ball0_x[0]), fix2int15(ball0_y[0]), 4, ball_color_0);
       // Draw peg
-      fillCircle(peg_x_int, peg_y_int, 6, peg_color);
+      fillCircle(peg_x_int[0], peg_y_int[0], 6, peg_color);
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -282,19 +357,19 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
     static int spare_time ;
 
     // Create a ball
-    createBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy);
+    createBall1();
 
     while(1) {
       // Measure time at start of thread
       begin_time = time_us_32() ;      
       // Erase ball
-      fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, BLACK);
+      fillCircle(fix2int15(ball1_x[0]), fix2int15(ball1_y[0]), 4, BLACK);
       // Update ball position and velocity
-      moveBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy, g); 
+      moveBall1(); 
       // Draw the ball at new position
-      fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, ball_color_1);
+      fillCircle(fix2int15(ball1_x[0]), fix2int15(ball1_y[0]), 4, ball_color_1);
       // Draw peg
-      fillCircle(peg_x_int, peg_y_int, 6, peg_color);
+      fillCircle(peg_x_int[0], peg_y_int[0], 6, peg_color);
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -408,18 +483,21 @@ int main(){
 
   // initialize VGA
   initVGA() ;
+
+  // Create peg
+  createPeg();
   
   // Convert parameters
   g = float2fix15(g_float);
   ball_r = int2fix15(ball_r_int);
   peg_r = int2fix15(peg_r_int);
-  peg_x = int2fix15(peg_x_int);
-  peg_y = int2fix15(peg_y_int);
+  peg_x[0] = int2fix15(peg_x_int[0]);
+  peg_y[0] = int2fix15(peg_y_int[0]);
   bounciness = float2fix15(bounciness_float);
 
   // start core 1 
-  // multicore_reset_core1();
-  // multicore_launch_core1(&core1_main);
+  multicore_reset_core1();
+  multicore_launch_core1(&core1_main);
 
   // add threads
   pt_add_thread(protothread_serial);
