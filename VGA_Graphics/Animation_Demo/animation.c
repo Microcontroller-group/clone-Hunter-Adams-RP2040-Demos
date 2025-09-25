@@ -111,7 +111,7 @@ float bounciness_float = 0.6;
 fix15 bounciness;
 
 // Ball and peg parameters
-int ball_num_display = 20; // Number of balls to display on screen
+int ball_num_display = 3; // Number of balls to display on screen
 #define ball_num       20
 #define peg_row        16
 #define peg_num        ((peg_row*(peg_row+1))/2)
@@ -127,6 +127,14 @@ int peg_x_int[peg_num];
 int peg_y_int[peg_num];
 fix15 peg_x[peg_num];
 fix15 peg_y[peg_num];
+
+// Ball count
+int ball_count = 0;
+
+// Text display
+char text_1[32];
+char text_2[32];
+char text_3[32];
 
 // Create peg
 void createPeg()
@@ -189,7 +197,7 @@ void createBall1()
 // Update ball position and velocity
 static inline void moveBall0()
 {
-  for (int i = 0; i < ball_num; i++)
+  for (int i = 0; i < ball_num_display; i++)
   {
     for (int j = 0; j < peg_num; j++)
     {
@@ -217,10 +225,7 @@ static inline void moveBall0()
           ball0_vy[i] = multfix15(ball0_vy[i], bounciness);
 
           // Trigger DMA on collision
-          if (i < ball_num_display)
-          {
-            dma_start_channel_mask(1u << ctrl_chan);
-          }
+          dma_start_channel_mask(1u << ctrl_chan);
         }
       }
     }
@@ -241,6 +246,7 @@ static inline void moveBall0()
       ball0_y[i] = int2fix15(ball_r_int);
       ball0_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
       ball0_vy[i] = int2fix15(0);
+      ball_count += 1;
     }
 
     // Gravity
@@ -254,7 +260,7 @@ static inline void moveBall0()
 
 static inline void moveBall1()
 {
-  for (int i = 0; i < ball_num; i++)
+  for (int i = 0; i < ball_num_display; i++)
   {
     for (int j = 0; j < peg_num; j++)
     {
@@ -282,10 +288,7 @@ static inline void moveBall1()
           ball1_vy[i] = multfix15(ball1_vy[i], bounciness);
 
           // Trigger DMA on collision
-          if (i < ball_num_display)
-          {
-            dma_start_channel_mask(1u << ctrl_chan);
-          }
+          dma_start_channel_mask(1u << ctrl_chan);
         }
       }
     }
@@ -306,6 +309,7 @@ static inline void moveBall1()
       ball1_y[i] = int2fix15(ball_r_int);
       ball1_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
       ball1_vy[i] = int2fix15(0);
+      ball_count += 1;
     }
 
     // Gravity
@@ -386,6 +390,18 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       {
         fillCircle(fix2int15(peg_x[i]), fix2int15(peg_y[i]), 6, peg_color);
       }
+
+      // Display text
+      fillRect(0, 0, 200, 60, BLACK); // Clear previous text
+      sprintf(text_1, "Total number of balls: %d", ball_num_display * 2);
+      sprintf(text_2, "Ball reborn: %d", ball_count);
+      sprintf(text_3, "Time: %d s", time_us_32()/1000000);
+      setCursor(10, 10);
+      writeString(text_1);
+      setCursor(10, 20);
+      writeString(text_2);
+      setCursor(10, 30);
+      writeString(text_3);
 
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
@@ -553,10 +569,14 @@ int main(){
   createPeg();
 
   // Check screen dimensions
-  // fillCircle(   0,   0, 10, WHITE );
-  // fillCircle( 640,   0, 10,   RED );
-  // fillCircle( 640, 480, 10, GREEN );
-  // fillCircle(   0, 480, 10,  BLUE );
+  fillCircle(   0,   0, 10,   BLUE );
+  fillCircle( 640,   0, 10,   PINK );
+  fillCircle( 640, 480, 10,  GREEN );
+  fillCircle(   0, 480, 10, YELLOW );
+
+  // Display text settings
+  setTextColor(WHITE);
+  setTextSize(1);
   
   // Convert parameters
   g = float2fix15(g_float);
