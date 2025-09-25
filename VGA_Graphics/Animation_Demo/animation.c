@@ -107,11 +107,11 @@ char peg_color = GREEN ;
 // Physics parameter
 float g_float = 0.75;
 fix15 g;
-float bounciness_float = 0.8;
+float bounciness_float = 0.6;
 fix15 bounciness;
 
 // Ball and peg parameters
-#define ball_num     1
+#define ball_num     5
 #define peg_row      16
 #define peg_num      ((peg_row*(peg_row+1))/2)
 #define peg_start_x  320
@@ -167,7 +167,7 @@ void createBall0()
   for (int i = 0; i < ball_num; i++)
   {
     ball0_x[i] = int2fix15(320);
-    ball0_y[i] = int2fix15(0);
+    ball0_y[i] = int2fix15(ball_r_int);
     ball0_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
     ball0_vy[i] = int2fix15(0);
   }
@@ -179,7 +179,7 @@ void createBall1()
   for (int i = 0; i < ball_num; i++)
   {
     ball1_x[i] = int2fix15(320);
-    ball1_y[i] = int2fix15(0);
+    ball1_y[i] = int2fix15(ball_r_int);
     ball1_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
     ball1_vy[i] = int2fix15(0);
   }
@@ -221,20 +221,20 @@ static inline void moveBall0()
       }
     }
     // Hit walls
-    if ( (fix2int15(ball0_x[i]) < 0) || (fix2int15(ball0_x[i]) > 640) )
+    if ( (fix2int15(ball0_x[i]) < ball_r_int) || (fix2int15(ball0_x[i]) > (640 - ball_r_int)) )
     {
       ball0_vx[i] = -ball0_vx[i];
     }
-    if ( fix2int15(ball0_y[i]) < 0 )
+    if ( fix2int15(ball0_y[i]) < ball_r_int )
     {
       ball0_vy[i] = -ball0_vy[i];
     }
 
     // Ball reborn
-    if ( fix2int15(ball0_y[i]) > 470 )
+    if ( fix2int15(ball0_y[i]) > 480 + ball_r_int )
     {
       ball0_x[i] = int2fix15(320);
-      ball0_y[i] = int2fix15(0);
+      ball0_y[i] = int2fix15(ball_r_int);
       ball0_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
       ball0_vy[i] = int2fix15(0);
     }
@@ -283,20 +283,20 @@ static inline void moveBall1()
       }
     }
     // Hit walls
-    if ( (fix2int15(ball1_x[i]) < 0) || (fix2int15(ball1_x[i]) > 640) )
+    if ( (fix2int15(ball1_x[i]) < ball_r_int) || (fix2int15(ball1_x[i]) > (640 - ball_r_int)) )
     {
       ball1_vx[i] = -ball1_vx[i];
     }
-    if ( fix2int15(ball1_y[i]) < 0 )
+    if ( fix2int15(ball1_y[i]) < ball_r_int )
     {
       ball1_vy[i] = -ball1_vy[i];
     }
 
     // Ball reborn
-    if ( fix2int15(ball1_y[i]) > 470 )
+    if ( fix2int15(ball1_y[i]) > 480 + ball_r_int )
     {
       ball1_x[i] = int2fix15(320);
-      ball1_y[i] = int2fix15(0);
+      ball1_y[i] = int2fix15(ball_r_int);
       ball1_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
       ball1_vy[i] = int2fix15(0);
     }
@@ -353,12 +353,6 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
     // Create a ball
     createBall0();
-
-    // Check screen dimensions
-    // fillCircle(   0,   0, 10, WHITE );
-    // fillCircle( 640,   0, 10,   RED );
-    // fillCircle( 640, 480, 10, GREEN );
-    // fillCircle(   0, 480, 10,  BLUE );
 
     while(1) {
       // Measure time at start of thread
@@ -550,6 +544,12 @@ int main(){
 
   // Create peg
   createPeg();
+
+  // Check screen dimensions
+  fillCircle(   0,   0, 10, WHITE );
+  fillCircle( 640,   0, 10,   RED );
+  fillCircle( 640, 480, 10, GREEN );
+  fillCircle(   0, 480, 10,  BLUE );
   
   // Convert parameters
   g = float2fix15(g_float);
