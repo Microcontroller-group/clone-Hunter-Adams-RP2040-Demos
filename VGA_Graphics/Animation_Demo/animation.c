@@ -99,8 +99,10 @@ typedef signed int fix15 ;
 // uS per frame
 #define FRAME_RATE 33000
 
-// the color of the boid
-char color = WHITE ;
+// the color of the ball and peg
+char ball_color_0 = WHITE ;
+char ball_color_1 = BLUE ;
+char peg_color = GREEN ;
 
 // Gravity parameter
 float g_float = 0.75;
@@ -223,7 +225,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         sscanf(pt_serial_in_buffer,"%d", &user_input) ;
         // update boid color
         if ((user_input > 0) && (user_input < 16)) {
-          color = (char)user_input ;
+          ball_color_0 = (char)user_input ;
         }
       } // END WHILE(1)
   PT_END(pt);
@@ -256,9 +258,9 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // Update ball position and velocity
       moveBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, g); 
       // Draw the ball at new position
-      fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, BLUE);
+      fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, ball_color_0);
       // Draw peg
-      fillCircle(peg_x_int, peg_y_int, 6, GREEN);
+      fillCircle(peg_x_int, peg_y_int, 6, peg_color);
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -290,9 +292,9 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       // Update ball position and velocity
       moveBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy, g); 
       // Draw the ball at new position
-      fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, RED);
+      fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, ball_color_1);
       // Draw peg
-      fillCircle(peg_x_int, peg_y_int, 6, GREEN);
+      fillCircle(peg_x_int, peg_y_int, 6, peg_color);
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -416,12 +418,12 @@ int main(){
   bounciness = float2fix15(bounciness_float);
 
   // start core 1 
-  multicore_reset_core1();
-  multicore_launch_core1(&core1_main);
+  // multicore_reset_core1();
+  // multicore_launch_core1(&core1_main);
 
   // add threads
-  // pt_add_thread(protothread_serial);
-  // pt_add_thread(protothread_anim);
+  pt_add_thread(protothread_serial);
+  pt_add_thread(protothread_anim);
 
   // start scheduler
   pt_schedule_start ;
