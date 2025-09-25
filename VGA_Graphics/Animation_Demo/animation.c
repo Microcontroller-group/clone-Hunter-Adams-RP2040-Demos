@@ -100,9 +100,9 @@ typedef signed int fix15 ;
 #define FRAME_RATE 33000
 
 // the color of the ball and peg
-char ball_color_0 = WHITE ;
+char ball_color_0 = YELLOW ;
 char ball_color_1 = BLUE ;
-char peg_color = GREEN ;
+char peg_color =    WHITE ;
 
 // Physics parameter
 float g_float = 0.75;
@@ -111,13 +111,14 @@ float bounciness_float = 0.6;
 fix15 bounciness;
 
 // Ball and peg parameters
-#define ball_num     5
-#define peg_row      16
-#define peg_num      ((peg_row*(peg_row+1))/2)
-#define peg_start_x  320
-#define peg_start_y  60
-int ball_r_int =  4;
-int peg_r_int =   6;
+int ball_num_display = 20; // Number of balls to display on screen
+#define ball_num       20
+#define peg_row        16
+#define peg_num        ((peg_row*(peg_row+1))/2)
+#define peg_start_x    320
+#define peg_start_y    60
+int ball_r_int =   4;
+int peg_r_int =    6;
 fix15 ball_r;
 fix15 peg_r;
 
@@ -216,7 +217,10 @@ static inline void moveBall0()
           ball0_vy[i] = multfix15(ball0_vy[i], bounciness);
 
           // Trigger DMA on collision
-          dma_start_channel_mask(1u << ctrl_chan);
+          if (i < ball_num_display)
+          {
+            dma_start_channel_mask(1u << ctrl_chan);
+          }
         }
       }
     }
@@ -278,7 +282,10 @@ static inline void moveBall1()
           ball1_vy[i] = multfix15(ball1_vy[i], bounciness);
 
           // Trigger DMA on collision
-          dma_start_channel_mask(1u << ctrl_chan);
+          if (i < ball_num_display)
+          {
+            dma_start_channel_mask(1u << ctrl_chan);
+          }
         }
       }
     }
@@ -368,7 +375,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       moveBall0();
 
       // Draw the ball at new position
-      for (int i = 0; i < ball_num; i++)
+      for (int i = 0; i < ball_num_display; i++)
       {
         fillCircle(fix2int15(ball0_x[i]), fix2int15(ball0_y[i]), 4, ball_color_0);
       }
@@ -417,7 +424,7 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       moveBall1();
 
       // Draw the ball at new position
-      for (int i = 0; i < ball_num; i++)
+      for (int i = 0; i < ball_num_display; i++)
       {
         fillCircle(fix2int15(ball1_x[i]), fix2int15(ball1_y[i]), 4, ball_color_1);
       }
@@ -546,10 +553,10 @@ int main(){
   createPeg();
 
   // Check screen dimensions
-  fillCircle(   0,   0, 10, WHITE );
-  fillCircle( 640,   0, 10,   RED );
-  fillCircle( 640, 480, 10, GREEN );
-  fillCircle(   0, 480, 10,  BLUE );
+  // fillCircle(   0,   0, 10, WHITE );
+  // fillCircle( 640,   0, 10,   RED );
+  // fillCircle( 640, 480, 10, GREEN );
+  // fillCircle(   0, 480, 10,  BLUE );
   
   // Convert parameters
   g = float2fix15(g_float);
