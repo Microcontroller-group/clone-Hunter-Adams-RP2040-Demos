@@ -37,8 +37,46 @@
 #include "hardware/dma.h"
 #include "hardware/clocks.h"
 #include "hardware/pll.h"
+#include "hardware/spi.h"
 // Include protothreads
 #include "pt_cornell_rp2040_v1_4.h"
+
+// ==================================================
+// === CODE FROM DMA DEMO STARTS HERE =================
+// ==================================================
+
+// Number of samples per period in sine table
+#define sine_table_size 256
+
+// Sine table
+int raw_sin[sine_table_size] ;
+
+// Table of values to be sent to DAC
+unsigned short DAC_data[sine_table_size] ;
+
+// Pointer to the address of the DAC data table
+unsigned short * address_pointer_dma = &DAC_data[0] ;
+
+// DMA channel variables (now global for collision-triggered DMA)
+int data_chan;
+int ctrl_chan;
+
+// A-channel, 1x, active
+#define DAC_config_chan_A 0b0011000000000000
+
+//SPI configurations
+#define PIN_MISO 4
+#define PIN_CS   5
+#define PIN_SCK  6
+#define PIN_MOSI 7
+#define SPI_PORT spi0
+
+// Number of DMA transfers per event
+const uint32_t transfer_count = sine_table_size ;
+
+// ==================================================
+// === CODE FROM DMA DEMO ENDS HERE ===================
+// ==================================================
 
 // === the fixed point macros ========================================
 typedef signed int fix15 ;
@@ -61,100 +99,222 @@ typedef signed int fix15 ;
 // uS per frame
 #define FRAME_RATE 33000
 
-// the color of the boid
-char color = WHITE ;
+// the color of the ball and peg
+char ball_color_0 = YELLOW ;
+char ball_color_1 = BLUE ;
+char peg_color =    WHITE ;
 
-// Gravity parameter
-float g_float = 5.0;
+// Physics parameter
+float g_float = 0.75;
 fix15 g;
-
-// Ball and peg parameters
-int ball_r_int =   4;
-int peg_r_int =    6;
-int peg_x_int =  320;
-int peg_y_int =  240;
-float bounciness_float = 0.5;
-fix15 ball_r;
-fix15 peg_r;
-fix15 peg_x;
-fix15 peg_y;
+float bounciness_float = 0.6;
 fix15 bounciness;
 
-// Ball on core 0
-fix15 ball0_x;
-fix15 ball0_y;
-fix15 ball0_vx;
-fix15 ball0_vy;
+// Ball and peg parameters
+int ball_num_display = 20; // Number of balls to display on screen
+#define ball_num       20
+#define peg_row        16
+#define peg_num        ((peg_row*(peg_row+1))/2)
+#define peg_start_x    320
+#define peg_start_y    60
+int ball_r_int =   4;
+int peg_r_int =    6;
+fix15 ball_r;
+fix15 peg_r;
 
-// Ball on core 1
-fix15 ball1_x;
-fix15 ball1_y;
-fix15 ball1_vx;
-fix15 ball1_vy;
+// Peg position
+int peg_x_int[peg_num];
+int peg_y_int[peg_num];
+fix15 peg_x[peg_num];
+fix15 peg_y[peg_num];
 
-// Create ball
-void createBall(fix15* x, fix15* y, fix15* vx, fix15* vy)
+// Create peg
+void createPeg()
 {
-  // Start in center top
-  *x = int2fix15(320);
-  *y = int2fix15(0);
-  *vx = ((fix15)(rand() & 0xffff) >> 1) - 16384;
-  *vy = int2fix15(0);
-}
-
-// Update ball position and velocity
-void moveBall(fix15* x, fix15* y, fix15* vx, fix15* vy, fix15 g)
-{
-  // Peg collision
-  fix15 dx = *x - peg_x;
-  fix15 dy = *y - peg_y;
-  if ( (abs(dx) < ball_r + peg_r) && (abs(dy) < ball_r + peg_r) )
+  int peg_index = 0;
+  for (int r = 1; r <= peg_row; r++)
   {
-    fix15 distance = sqrtfix(multfix15(dx, dx) + multfix15(dy, dy));
-
-    fix15 normal_x = divfix(dx, distance);
-    fix15 normal_y = divfix(dy, distance);
-
-    fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x,  *vx) + multfix15(normal_y, *vy)));
-
-    if ( intermediate_term > int2fix15(0))
+    for (int i = 1; i <= r; i++)
     {
-      //ball.x = peg.x + (normal_x * (distance+1))
-      *x = peg_x + multfix15(normal_x, (distance + int2fix15(1)));
-      *y = peg_y + multfix15(normal_y, (distance + int2fix15(1)));
-      //ball.vx = ball.vx + (normal_x * intermediate_term)
-      *vx = *vx + multfix15(normal_x, intermediate_term);
-      *vy = *vy + multfix15(normal_y, intermediate_term);
-      *vx = multfix15(*vx, bounciness);
-      *vy = multfix15(*vy, bounciness);
+      peg_x_int[peg_index] = peg_start_x - 19*(r-1) + (i-1)*38;
+      peg_y_int[peg_index] = peg_start_y + 19*(r-1);
+      peg_index++;
     }
   }
 
-  // Hit walls
-  if ( (fix2int15(*x) < 0) || (fix2int15(*x) > 640) )
+  for (int i = 0; i < peg_num; i++)
   {
-    *vx = -*vx;
+    peg_x[i] = int2fix15(peg_x_int[i]);
+    peg_y[i] = int2fix15(peg_y_int[i]);
   }
-  if ( fix2int15(*y) < 0 )
+}
+
+// Ball on core 0
+fix15 ball0_x[ball_num];
+fix15 ball0_y[ball_num];
+fix15 ball0_vx[ball_num];
+fix15 ball0_vy[ball_num];
+
+// Ball on core 1
+fix15 ball1_x[ball_num];
+fix15 ball1_y[ball_num];
+fix15 ball1_vx[ball_num];
+fix15 ball1_vy[ball_num];
+
+// Create ball
+void createBall0()
+{
+  // Start in center top
+  for (int i = 0; i < ball_num; i++)
   {
-    *vy = -*vy;
+    ball0_x[i] = int2fix15(320);
+    ball0_y[i] = int2fix15(ball_r_int);
+    ball0_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+    ball0_vy[i] = int2fix15(0);
   }
+}
 
-  // Ball reborn
-  if ( fix2int15(*y) > 470 )
+void createBall1()
+{
+  // Start in center top
+  for (int i = 0; i < ball_num; i++)
   {
-    *x = int2fix15(320);
-    *y = int2fix15(0);
-    *vx = ((fix15)(rand() & 0xffff) >> 1) - 16384;
-    *vy = int2fix15(0);
+    ball1_x[i] = int2fix15(320);
+    ball1_y[i] = int2fix15(ball_r_int);
+    ball1_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+    ball1_vy[i] = int2fix15(0);
   }
+}
 
-  // Gravity
-  *vy = *vy + g;
+// Update ball position and velocity
+static inline void moveBall0()
+{
+  for (int i = 0; i < ball_num; i++)
+  {
+    for (int j = 0; j < peg_num; j++)
+    {
+      // Peg collision
+      fix15 dx = ball0_x[i] - peg_x[j];
+      fix15 dy = ball0_y[i] - peg_y[j];
+      if ( (abs(dx) < ball_r + peg_r) && (abs(dy) < ball_r + peg_r) )
+      {
+        fix15 distance = sqrtfix(multfix15(dx, dx) + multfix15(dy, dy));
 
-  // Update position
-  *x = *x + *vx;
-  *y = *y + *vy;
+        fix15 normal_x = divfix(dx, distance);
+        fix15 normal_y = divfix(dy, distance);
+
+        fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x,  ball0_vx[i]) + multfix15(normal_y, ball0_vy[i])));
+
+        if ( intermediate_term > int2fix15(0))
+        {
+          //ball.x = peg.x + (normal_x * (distance+1))
+          ball0_x[i] = peg_x[j] + multfix15(normal_x, (distance + int2fix15(1)));
+          ball0_y[i] = peg_y[j] + multfix15(normal_y, (distance + int2fix15(1)));
+          //ball.vx = ball.vx + (normal_x * intermediate_term)
+          ball0_vx[i] = ball0_vx[i] + multfix15(normal_x, intermediate_term);
+          ball0_vy[i] = ball0_vy[i] + multfix15(normal_y, intermediate_term);
+          ball0_vx[i] = multfix15(ball0_vx[i], bounciness);
+          ball0_vy[i] = multfix15(ball0_vy[i], bounciness);
+
+          // Trigger DMA on collision
+          if (i < ball_num_display)
+          {
+            dma_start_channel_mask(1u << ctrl_chan);
+          }
+        }
+      }
+    }
+    // Hit walls
+    if ( (fix2int15(ball0_x[i]) < ball_r_int) || (fix2int15(ball0_x[i]) > (640 - ball_r_int)) )
+    {
+      ball0_vx[i] = -ball0_vx[i];
+    }
+    if ( fix2int15(ball0_y[i]) < ball_r_int )
+    {
+      ball0_vy[i] = -ball0_vy[i];
+    }
+
+    // Ball reborn
+    if ( fix2int15(ball0_y[i]) > 480 + ball_r_int )
+    {
+      ball0_x[i] = int2fix15(320);
+      ball0_y[i] = int2fix15(ball_r_int);
+      ball0_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+      ball0_vy[i] = int2fix15(0);
+    }
+
+    // Gravity
+    ball0_vy[i] = ball0_vy[i] + g;
+
+    // Update position
+    ball0_x[i] = ball0_x[i] + ball0_vx[i];
+    ball0_y[i] = ball0_y[i] + ball0_vy[i];
+  }
+}
+
+static inline void moveBall1()
+{
+  for (int i = 0; i < ball_num; i++)
+  {
+    for (int j = 0; j < peg_num; j++)
+    {
+      // Peg collision
+      fix15 dx = ball1_x[i] - peg_x[j];
+      fix15 dy = ball1_y[i] - peg_y[j];
+      if ( (abs(dx) < ball_r + peg_r) && (abs(dy) < ball_r + peg_r) )
+      {
+        fix15 distance = sqrtfix(multfix15(dx, dx) + multfix15(dy, dy));
+
+        fix15 normal_x = divfix(dx, distance);
+        fix15 normal_y = divfix(dy, distance);
+
+        fix15 intermediate_term = multfix15(int2fix15(-2), (multfix15(normal_x,  ball1_vx[i]) + multfix15(normal_y, ball1_vy[i])));
+
+        if ( intermediate_term > int2fix15(0))
+        {
+          //ball.x = peg.x + (normal_x * (distance+1))
+          ball1_x[i] = peg_x[j] + multfix15(normal_x, (distance + int2fix15(1)));
+          ball1_y[i] = peg_y[j] + multfix15(normal_y, (distance + int2fix15(1)));
+          //ball.vx = ball.vx + (normal_x * intermediate_term)
+          ball1_vx[i] = ball1_vx[i] + multfix15(normal_x, intermediate_term);
+          ball1_vy[i] = ball1_vy[i] + multfix15(normal_y, intermediate_term);
+          ball1_vx[i] = multfix15(ball1_vx[i], bounciness);
+          ball1_vy[i] = multfix15(ball1_vy[i], bounciness);
+
+          // Trigger DMA on collision
+          if (i < ball_num_display)
+          {
+            dma_start_channel_mask(1u << ctrl_chan);
+          }
+        }
+      }
+    }
+    // Hit walls
+    if ( (fix2int15(ball1_x[i]) < ball_r_int) || (fix2int15(ball1_x[i]) > (640 - ball_r_int)) )
+    {
+      ball1_vx[i] = -ball1_vx[i];
+    }
+    if ( fix2int15(ball1_y[i]) < ball_r_int )
+    {
+      ball1_vy[i] = -ball1_vy[i];
+    }
+
+    // Ball reborn
+    if ( fix2int15(ball1_y[i]) > 480 + ball_r_int )
+    {
+      ball1_x[i] = int2fix15(320);
+      ball1_y[i] = int2fix15(ball_r_int);
+      ball1_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+      ball1_vy[i] = int2fix15(0);
+    }
+
+    // Gravity
+    ball1_vy[i] = ball1_vy[i] + g;
+
+    // Update position
+    ball1_x[i] = ball1_x[i] + ball1_vx[i];
+    ball1_y[i] = ball1_y[i] + ball1_vy[i];
+  }
 }
 
 // ==================================================
@@ -182,7 +342,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         sscanf(pt_serial_in_buffer,"%d", &user_input) ;
         // update boid color
         if ((user_input > 0) && (user_input < 16)) {
-          color = (char)user_input ;
+          ball_color_0 = (char)user_input ;
         }
       } // END WHILE(1)
   PT_END(pt);
@@ -199,25 +359,34 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     static int spare_time ;
 
     // Create a ball
-    createBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy);
-
-    // Check screen dimensions
-    // fillCircle(   0,   0, 10, WHITE );
-    // fillCircle( 640,   0, 10,   RED );
-    // fillCircle( 640, 480, 10, GREEN );
-    // fillCircle(   0, 480, 10,  BLUE );
+    createBall0();
 
     while(1) {
       // Measure time at start of thread
-      begin_time = time_us_32() ;      
+      begin_time = time_us_32();
+
       // Erase ball
-      fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, BLACK);
+      for (int i = 0; i < ball_num; i++)
+      {
+        fillCircle(fix2int15(ball0_x[i]), fix2int15(ball0_y[i]), 4, BLACK);
+      }
+
       // Update ball position and velocity
-      moveBall(&ball0_x, &ball0_y, &ball0_vx, &ball0_vy, g); 
+      moveBall0();
+
       // Draw the ball at new position
-      fillCircle(fix2int15(ball0_x), fix2int15(ball0_y), 4, BLUE);
+      for (int i = 0; i < ball_num_display; i++)
+      {
+        fillCircle(fix2int15(ball0_x[i]), fix2int15(ball0_y[i]), 4, ball_color_0);
+      }
+
       // Draw peg
-      fillCircle(320, 240, 6, GREEN);
+      fillCircle(peg_x_int[0], peg_y_int[0], 6, peg_color);
+      for(int i = 0; i < peg_num; i++)
+      {
+        fillCircle(fix2int15(peg_x[i]), fix2int15(peg_y[i]), 6, peg_color);
+      }
+
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -239,19 +408,33 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
     static int spare_time ;
 
     // Create a ball
-    createBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy);
+    createBall1();
 
     while(1) {
       // Measure time at start of thread
-      begin_time = time_us_32() ;      
+      begin_time = time_us_32();
+
       // Erase ball
-      fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, BLACK);
+      for (int i = 0; i < ball_num; i++)
+      {
+        fillCircle(fix2int15(ball1_x[i]), fix2int15(ball1_y[i]), 4, BLACK);
+      }
+
       // Update ball position and velocity
-      moveBall(&ball1_x, &ball1_y, &ball1_vx, &ball1_vy, g); 
+      moveBall1();
+
       // Draw the ball at new position
-      fillCircle(fix2int15(ball1_x), fix2int15(ball1_y), 4, RED);
+      for (int i = 0; i < ball_num_display; i++)
+      {
+        fillCircle(fix2int15(ball1_x[i]), fix2int15(ball1_y[i]), 4, ball_color_1);
+      }
+
       // Draw peg
-      fillCircle(320, 240, 6, GREEN);
+      for(int i = 0; i < peg_num; i++)
+      {
+        fillCircle(fix2int15(peg_x[i]), fix2int15(peg_y[i]), 6, peg_color);
+      }
+
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
@@ -277,19 +460,108 @@ void core1_main(){
 // ========================================
 // USE ONLY C-sdk library
 int main(){
+
+  // ===========================================
+  // ===== CODE FROM DMA DEMO STARTS HERE ==========
+  // ===========================================
+
+
+    // Initidalize stdio
+    stdio_init_all();
+
+    // Initialize SPI channel (channel, baud rate set to 20MHz)
+    spi_init(SPI_PORT, 20000000) ;
+
+    // Format SPI channel (channel, data bits per transfer, polarity, phase, order)
+    spi_set_format(SPI_PORT, 16, 0, 0, 0);
+
+    // Map SPI signals to GPIO ports, acts like framed SPI with this CS mapping
+    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_CS, GPIO_FUNC_SPI) ;
+    gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+
+    // Build sine table and DAC data table
+    int i ;
+    for (i=0; i<(sine_table_size); i++){
+        raw_sin[i] = (int)(2047 * sin((float)i*6.283/(float)sine_table_size) + 2047); //12 bit
+        DAC_data[i] = DAC_config_chan_A | (raw_sin[i] & 0x0fff) ;
+    }
+
+    // Select DMA channels (now global)
+    data_chan = dma_claim_unused_channel(true);
+    ctrl_chan = dma_claim_unused_channel(true);
+
+    // Setup the control channel
+    dma_channel_config c = dma_channel_get_default_config(ctrl_chan);   // default configs
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);             // 32-bit txfers
+    channel_config_set_read_increment(&c, false);                       // no read incrementing
+    channel_config_set_write_increment(&c, false);                      // no write incrementing
+    channel_config_set_chain_to(&c, data_chan);                         // chain to data channel
+
+    dma_channel_configure(
+        ctrl_chan,                          // Channel to be configured
+        &c,                                 // The configuration we just created
+        &dma_hw->ch[data_chan].read_addr,   // Write address (data channel read address)
+        &address_pointer_dma,                   // Read address (POINTER TO AN ADDRESS)
+        1,                                  // Number of transfers
+        false                               // Don't start immediately
+    );
+
+    // Setup the data channel
+    dma_channel_config c2 = dma_channel_get_default_config(data_chan);  // Default configs
+    channel_config_set_transfer_data_size(&c2, DMA_SIZE_16);            // 16-bit txfers
+    channel_config_set_read_increment(&c2, true);                       // yes read incrementing
+    channel_config_set_write_increment(&c2, false);                     // no write incrementing
+    // (X/Y)*sys_clk, where X is the first 16 bytes and Y is the second
+    // sys_clk is 125 MHz unless changed in code. Configured to ~44 kHz
+    dma_timer_set_fraction(0, 0x0017, 0xffff) ;
+    // 0x3b means timer0 (see SDK manual)
+    channel_config_set_dreq(&c2, 0x3b);                                 // DREQ paced by timer 0
+    // chain to the controller DMA channel
+    // channel_config_set_chain_to(&c2, ctrl_chan);                        // Chain to control channel
+
+
+    dma_channel_configure(
+        data_chan,                  // Channel to be configured
+        &c2,                        // The configuration we just created
+        &spi_get_hw(SPI_PORT)->dr,  // write address (SPI data register)
+        DAC_data,                   // The initial read address
+        sine_table_size,            // Number of transfers
+        false                       // Don't start immediately.
+    );
+
+
+    // start the control channel
+    // dma_start_channel_mask(1u << ctrl_chan) ;
+
+    // Exit main.
+    // No code executing!!
+
+  // ===========================================
+  // ===== CODE FROM DMA DEMO ENDS HERE ==========
+  // ===========================================
+
   set_sys_clock_khz(150000, true) ;
   // initialize stio
-  stdio_init_all() ;
+  // stdio_init_all() ;
 
   // initialize VGA
   initVGA() ;
+
+  // Create peg
+  createPeg();
+
+  // Check screen dimensions
+  // fillCircle(   0,   0, 10, WHITE );
+  // fillCircle( 640,   0, 10,   RED );
+  // fillCircle( 640, 480, 10, GREEN );
+  // fillCircle(   0, 480, 10,  BLUE );
   
   // Convert parameters
-  g = float2fix15(g_float/10);
+  g = float2fix15(g_float);
   ball_r = int2fix15(ball_r_int);
   peg_r = int2fix15(peg_r_int);
-  peg_x = int2fix15(peg_x_int);
-  peg_y = int2fix15(peg_y_int);
   bounciness = float2fix15(bounciness_float);
 
   // start core 1 
@@ -302,4 +574,4 @@ int main(){
 
   // start scheduler
   pt_schedule_start ;
-} 
+}
