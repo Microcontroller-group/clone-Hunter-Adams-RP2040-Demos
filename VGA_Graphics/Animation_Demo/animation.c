@@ -111,10 +111,11 @@ float bounciness_float = 0.8;
 fix15 bounciness;
 
 // Ball and peg parameters
-#define ball_num  1
-#define peg_num   3
+#define ball_num     1
+#define peg_row      16
+#define peg_num      ((peg_row*(peg_row+1))/2)
 #define peg_start_x  320
-#define peg_start_y   30
+#define peg_start_y  60
 int ball_r_int =  4;
 int peg_r_int =   6;
 fix15 ball_r;
@@ -129,12 +130,16 @@ fix15 peg_y[peg_num];
 // Create peg
 void createPeg()
 {
-  peg_x_int[0] = peg_start_x;
-  peg_y_int[0] = peg_start_y;
-  peg_x_int[1] = peg_start_x - 19;
-  peg_y_int[1] = peg_start_y + 19;
-  peg_x_int[2] = peg_start_x + 19;
-  peg_y_int[2] = peg_start_y + 19;
+  int peg_index = 0;
+  for (int r = 1; r <= peg_row; r++)
+  {
+    for (int i = 1; i <= r; i++)
+    {
+      peg_x_int[peg_index] = peg_start_x - 19*(r-1) + (i-1)*38;
+      peg_y_int[peg_index] = peg_start_y + 19*(r-1);
+      peg_index++;
+    }
+  }
 
   for (int i = 0; i < peg_num; i++)
   {
@@ -428,7 +433,7 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       {
         fillCircle(fix2int15(peg_x[i]), fix2int15(peg_y[i]), 6, peg_color);
       }
-      
+
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
       // yield for necessary amount of time
