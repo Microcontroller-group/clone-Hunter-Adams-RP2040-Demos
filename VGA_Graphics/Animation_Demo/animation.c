@@ -38,8 +38,14 @@
 #include "hardware/clocks.h"
 #include "hardware/pll.h"
 #include "hardware/spi.h"
+#include "hardware/adc.h"
 // Include protothreads
 #include "pt_cornell_rp2040_v1_4.h"
+
+// ADC
+#define ADC_PIN 26
+uint16_t adc_value_raw;
+int adc_value;
 
 // ============================================
 // ====== CODE FROM DMA DEMO STARTS HERE ======
@@ -107,21 +113,21 @@ typedef signed int fix15 ;
 char ball_color_0 =    YELLOW;
 char ball_color_1 =    BLUE;
 char peg_color =       WHITE;
-char histogram_color = GREEN;
+char histogram_color = WHITE;
 
 // Physics parameters
 float g_float = 0.75;
 fix15 g;
-float bounciness_float = 0.5;
+float bounciness_float = 0.42;
 fix15 bounciness;
 
 // Ball parameters
-#define ball_num_max 20  // Maximum number of balls on each core
+#define ball_num_max 100  // Maximum number of balls on each core
 int ball_r_int = 4;      // Ball radius
 fix15 ball_r;
 
 // Number of balls
-int ball_num_total = 3;  // Total number of balls
+int ball_num_total = 100;  // Total number of balls
 int ball_num0;           // Number of balls on core 0 = ball_num_total / 2
 int ball_num1;           // Number of balls on core 1 = ( ball_num_total + 1 ) / 2
 
@@ -157,6 +163,7 @@ fix15 peg_y[peg_num];
 char text_line1[32];
 char text_line2[32];
 char text_line3[32];
+char text_line4[32];
 
 // Fall count
 int fall_count_total = 0;
@@ -164,7 +171,7 @@ int fall_count[peg_row - 1] = {0};
 int fall_count_max = 0;
 
 // Histogram parameters
-#define histogram_height_max   80
+#define histogram_height_max   120
 #define histogram_width        peg_space_x
 #define histogram_start_x      (screen_width/2 - ((peg_row - 1)*histogram_width/2))
 int histogram_height[peg_row - 1] = {0};
@@ -193,12 +200,14 @@ void createPeg()
 // Create balls on core 0
 void createBall0()
 {
+  ball_num_total = ball_num_max * adc_value / 4096;
+  ball_num0 = ball_num_total / 2;
   // Start in center top
-  for (int i = 0; i < ball_num0; i++)
+  for (int i = 0; i < ball_num_max; i++)
   {
     ball0_x[i] = int2fix15(screen_width/2);
     ball0_y[i] = int2fix15(ball_r_int);
-    ball0_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+    ball0_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1)); // (fix15)((rand() & 0xffff) - int2fix15(1))
     ball0_vy[i] = int2fix15(0);
   }
 }
@@ -206,12 +215,14 @@ void createBall0()
 // Create balls on core 1
 void createBall1()
 {
+  ball_num_total = ball_num_max * adc_value / 4096;
+  ball_num1 = ( ball_num_total + 1 ) / 2;
   // Start in center top
-  for (int i = 0; i < ball_num1; i++)
+  for (int i = 0; i < ball_num_max; i++)
   {
     ball1_x[i] = int2fix15(screen_width/2);
     ball1_y[i] = int2fix15(ball_r_int);
-    ball1_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
+    ball1_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
     ball1_vy[i] = int2fix15(0);
   }
 }
@@ -219,6 +230,7 @@ void createBall1()
 // Update ball position and velocity on core 0
 static inline void moveBall0()
 {
+  ball_num_total = ball_num_max * adc_value / 4096;
   ball_num0 = ball_num_total / 2;
   for (int i = 0; i < ball_num0; i++)
   {
@@ -250,8 +262,8 @@ static inline void moveBall0()
         if ( intermediate_term > int2fix15(0))
         {
           //ball.x = peg.x + (normal_x * (distance+1))
-          ball0_x[i] = peg_x[j] + multfix15(normal_x, (distance + int2fix15(1)));
-          ball0_y[i] = peg_y[j] + multfix15(normal_y, (distance + int2fix15(1)));
+          ball0_x[i] = peg_x[j] + multfix15(normal_x, (ball_r + peg_r + int2fix15(1)));
+          ball0_y[i] = peg_y[j] + multfix15(normal_y, (ball_r + peg_r + int2fix15(1)));
           //ball.vx = ball.vx + (normal_x * intermediate_term)
           ball0_vx[i] = ball0_vx[i] + multfix15(normal_x, intermediate_term);
           ball0_vy[i] = ball0_vy[i] + multfix15(normal_y, intermediate_term);
@@ -278,28 +290,28 @@ static inline void moveBall0()
     }
 
     // Ball re-spawn
-    if ( fix2int15(ball0_y[i]) > (screen_height + ball_r_int) )
+    if ( fix2int15(ball0_y[i]) > (screen_height - histogram_height_max) )
     {
-      ball0_x[i] = int2fix15(screen_width/2);
-      ball0_y[i] = int2fix15(ball_r_int);
-      ball0_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
-      ball0_vy[i] = int2fix15(0);
-
       // Update fall count
       fall_count_total += 1;
-      for (int i = 0; i < peg_row - 1; i++)
+      for (int p = 0; p < peg_row - 1; p++)
       {
-        if ( (fix2int15(ball0_x[i]) >= (histogram_start_x + i*histogram_width)) && 
-             (fix2int15(ball0_x[i]) < (histogram_start_x + (i+1)*histogram_width)) )
+        if ( (fix2int15(ball0_x[i]) >= (histogram_start_x + p*histogram_width)) && 
+             (fix2int15(ball0_x[i]) < (histogram_start_x + (p+1)*histogram_width)) )
         {
-          fall_count[i] += 1;
-          if ( fall_count[i] > fall_count_max )
+          fall_count[p] += 1;
+          if ( fall_count[p] > fall_count_max )
           {
-            fall_count_max = fall_count[i];
+            fall_count_max = fall_count[p];
           }
-          histogram_height[i] = (fall_count[i] * histogram_height_max) / fall_count_max;
         }
+        histogram_height[p] = (fall_count[p] * histogram_height_max) / fall_count_max;
       }
+
+      ball0_x[i] = int2fix15(screen_width/2);
+      ball0_y[i] = int2fix15(ball_r_int);
+      ball0_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
+      ball0_vy[i] = int2fix15(0);
     }
 
     // Gravity
@@ -314,7 +326,8 @@ static inline void moveBall0()
 // Update ball position and velocity on core 1
 static inline void moveBall1()
 {
-  ball_num1 = ball_num_total - ball_num0;
+  ball_num_total = ball_num_max * adc_value / 4096;
+  ball_num1 = ( ball_num_total + 1 ) / 2;
   for (int i = 0; i < ball_num1; i++)
   {
     for (int j = 0; j < peg_num; j++)
@@ -345,8 +358,8 @@ static inline void moveBall1()
         if ( intermediate_term > int2fix15(0))
         {
           //ball.x = peg.x + (normal_x * (distance+1))
-          ball1_x[i] = peg_x[j] + multfix15(normal_x, (distance + int2fix15(1)));
-          ball1_y[i] = peg_y[j] + multfix15(normal_y, (distance + int2fix15(1)));
+          ball1_x[i] = peg_x[j] + multfix15(normal_x, (ball_r + peg_r + int2fix15(1)));
+          ball1_y[i] = peg_y[j] + multfix15(normal_y, (ball_r + peg_r + int2fix15(1)));
           //ball.vx = ball.vx + (normal_x * intermediate_term)
           ball1_vx[i] = ball1_vx[i] + multfix15(normal_x, intermediate_term);
           ball1_vy[i] = ball1_vy[i] + multfix15(normal_y, intermediate_term);
@@ -373,28 +386,28 @@ static inline void moveBall1()
     }
 
     // Ball re-spawn
-    if ( fix2int15(ball1_y[i]) > (screen_height + ball_r_int) )
+    if ( fix2int15(ball1_y[i]) > (screen_height - histogram_height_max) )
     {
-      ball1_x[i] = int2fix15(screen_width/2);
-      ball1_y[i] = int2fix15(ball_r_int);
-      ball1_vx[i] = ((fix15)(rand() & 0xffff) >> 1) - 16384;
-      ball1_vy[i] = int2fix15(0);
-
       // Update fall count
       fall_count_total += 1;
-      for (int i = 0; i < peg_row - 1; i++)
+      for (int p = 0; p < peg_row - 1; p++)
       {
-        if ( (fix2int15(ball1_x[i]) >= (histogram_start_x + i*histogram_width)) && 
-             (fix2int15(ball1_x[i]) < (histogram_start_x + (i+1)*histogram_width)) )
+        if ( (fix2int15(ball1_x[i]) >= (histogram_start_x + p*histogram_width)) && 
+             (fix2int15(ball1_x[i]) < (histogram_start_x + (p+1)*histogram_width)) )
         {
-          fall_count[i] += 1;
-          if ( fall_count[i] > fall_count_max )
+          fall_count[p] += 1;
+          if ( fall_count[p] > fall_count_max )
           {
-            fall_count_max = fall_count[i];
+            fall_count_max = fall_count[p];
           }
-          histogram_height[i] = (fall_count[i] * histogram_height_max) / fall_count_max;
         }
+        histogram_height[p] = (fall_count[p] * histogram_height_max) / fall_count_max;
       }
+
+      ball1_x[i] = int2fix15(screen_width/2);
+      ball1_y[i] = int2fix15(ball_r_int);
+      ball1_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
+      ball1_vy[i] = int2fix15(0);
     }
 
     // Gravity
@@ -438,7 +451,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
 } // timer thread
 
 // Animation on core 0
-static PT_THREAD (protothread_anim(struct pt *pt))
+static PT_THREAD (protothread_anim0(struct pt *pt))
 {
     // Mark beginning of thread
     PT_BEGIN(pt);
@@ -455,7 +468,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       begin_time = time_us_32();
 
       // Erase ball
-      for (int i = 0; i < ball_num_max; i++)
+      for (int i = 0; i < ball_num0; i++)
       {
         fillCircle(fix2int15(ball0_x[i]), fix2int15(ball0_y[i]), ball_r_int, BLACK);
       }
@@ -479,13 +492,29 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       fillRect(0, 0, 200, 60, BLACK); // Clear previous text
       sprintf(text_line1, "Current number of balls: %d", ball_num_total);
       sprintf(text_line2, "Re-spawn count: %d", fall_count_total);
-      sprintf(text_line3, "Time: %d s", time_us_32()>>6);
+      sprintf(text_line3, "Time: %d s", time_us_32()/1000000);
       setCursor(10, 10);
       writeString(text_line1);
       setCursor(10, 20);
       writeString(text_line2);
       setCursor(10, 30);
       writeString(text_line3);
+
+      // ADC read
+      adc_value_raw = adc_read();
+      adc_value = adc_value_raw;
+      sprintf(text_line4, "ADC: %d", adc_value);
+      setCursor(10, 40);
+      // writeString(text_line4);
+
+      // Display histogram
+      for (int i = 0; i < peg_row - 1; i++)
+      {
+        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
+                 histogram_width, histogram_height_max, BLACK); // Clear previous histogram
+        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
+                 histogram_width - 2, histogram_height[i], histogram_color);
+      }
 
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
@@ -515,7 +544,7 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       begin_time = time_us_32();
 
       // Erase ball
-      for (int i = 0; i < ball_num_max; i++)
+      for (int i = 0; i < ball_num1; i++)
       {
         fillCircle(fix2int15(ball1_x[i]), fix2int15(ball1_y[i]), ball_r_int, BLACK);
       }
@@ -536,13 +565,13 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       }
 
       // Display histogram
-      for (int i = 0; i < peg_row - 1; i++)
-      {
-        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
-                 histogram_width, histogram_height_max, BLACK); // Clear previous histogram
-        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
-                 histogram_width, histogram_height[i], histogram_color);
-      }
+      // for (int i = 0; i < peg_row - 1; i++)
+      // {
+      //   fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
+      //            histogram_width, histogram_height_max, BLACK); // Clear previous histogram
+      //   fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
+      //            histogram_width - 2, histogram_height[i], histogram_color);
+      // }
 
       // delay in accordance with frame rate
       spare_time = FRAME_RATE - (time_us_32() - begin_time) ;
@@ -657,14 +686,19 @@ int main(){
   // initialize VGA
   initVGA() ;
 
+  // initialize ADC
+  adc_init();
+  adc_gpio_init(ADC_PIN);
+  adc_select_input(0);
+
   // Create peg
   createPeg();
 
   // Check screen dimensions
-  fillCircle(            0,             0,  10,    BLUE );
-  fillCircle( screen_width,             0,  10,    PINK );
-  fillCircle( screen_width, screen_height,  10,   GREEN );
-  fillCircle(            0, screen_height,  10,  YELLOW );
+  // fillCircle(            0,             0,  10,    BLUE );
+  // fillCircle( screen_width,             0,  10,    PINK );
+  // fillCircle( screen_width, screen_height,  10,   GREEN );
+  // fillCircle(            0, screen_height,  10,  YELLOW );
 
   // Display text settings
   setTextColor(WHITE);
@@ -682,7 +716,7 @@ int main(){
 
   // add threads
   // pt_add_thread(protothread_serial);
-  pt_add_thread(protothread_anim);
+  pt_add_thread(protothread_anim0);
 
   // start scheduler
   pt_schedule_start ;
