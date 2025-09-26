@@ -1,4 +1,3 @@
-
 /**
  * Hunter Adams (vha3@cornell.edu)
  * 
@@ -177,6 +176,8 @@ int fall_count_max = 0;
 #define histogram_width        peg_space_x
 #define histogram_start_x      (screen_width/2 - ((peg_row - 1)*histogram_width/2))
 int histogram_height[peg_row - 1] = {0};
+int histogram_height_prev0[peg_row - 1] = {0};
+int histogram_height_prev1[peg_row - 1] = {0};
 
 // Create pegs
 void createPeg()
@@ -202,13 +203,11 @@ void createPeg()
 // Create balls on core 0
 void createBall0()
 {
-  ball_num_total = ball_num_max * adc_value / 4096;
-  ball_num0 = ball_num_total / 2;
   // Start in center top
   for (int i = 0; i < ball_num_max0; i++)
   {
     ball0_x[i] = int2fix15(screen_width/2);
-    ball0_y[i] = int2fix15(0);
+    ball0_y[i] = int2fix15(ball_r_int);
     ball0_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
     ball0_vy[i] = int2fix15(0);
   }
@@ -217,13 +216,11 @@ void createBall0()
 // Create balls on core 1
 void createBall1()
 {
-  ball_num_total = ball_num_max * adc_value / 4096;
-  ball_num1 = ( ball_num_total + 1 ) / 2;
   // Start in center top
   for (int i = 0; i < ball_num_max1; i++)
   {
     ball1_x[i] = int2fix15(screen_width/2);
-    ball1_y[i] = int2fix15(0);
+    ball1_y[i] = int2fix15(ball_r_int);
     ball1_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
     ball1_vy[i] = int2fix15(0);
   }
@@ -270,8 +267,10 @@ static inline void moveBall0()
           ball0_vx[i] = multfix15(ball0_vx[i], bounciness);
           ball0_vy[i] = multfix15(ball0_vy[i], bounciness);
 
-          // Trigger DMA on collision
-          dma_start_channel_mask(1u << ctrl_chan);
+          // Trigger DMA on collision, if channel is not already busy
+          if (!dma_channel_is_busy(data_chan)) {
+            dma_start_channel_mask(1u << ctrl_chan);
+          }
 
           // Only handle one collision per ball per frame
           break;
@@ -290,7 +289,7 @@ static inline void moveBall0()
     }
 
     // Ball re-spawn
-    if ( fix2int15(ball0_y[i]) > (screen_height - histogram_height_max) )
+    if ( fix2int15(ball0_y[i]) > (screen_height - histogram_height_max - (ball_r_int<<2)) )
     {
       // Update fall count
       fall_count_total += 1;
@@ -314,7 +313,7 @@ static inline void moveBall0()
       }
 
       ball0_x[i] = int2fix15(screen_width/2);
-      ball0_y[i] = int2fix15(0);
+      ball0_y[i] = int2fix15(ball_r_int);
       ball0_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
       ball0_vy[i] = int2fix15(0);
     }
@@ -369,8 +368,10 @@ static inline void moveBall1()
           ball1_vx[i] = multfix15(ball1_vx[i], bounciness);
           ball1_vy[i] = multfix15(ball1_vy[i], bounciness);
 
-          // Trigger DMA on collision
-          dma_start_channel_mask(1u << ctrl_chan);
+          // Trigger DMA on collision, if channel is not already busy
+          if (!dma_channel_is_busy(data_chan)) {
+            dma_start_channel_mask(1u << ctrl_chan);
+          }
 
           // Only handle one collision per ball per frame
           break;
@@ -389,7 +390,7 @@ static inline void moveBall1()
     }
 
     // Ball re-spawn
-    if ( fix2int15(ball1_y[i]) > (screen_height - histogram_height_max) )
+    if ( fix2int15(ball1_y[i]) > (screen_height - histogram_height_max - (ball_r_int<<2)) )
     {
       // Update fall count
       fall_count_total += 1;
@@ -413,7 +414,7 @@ static inline void moveBall1()
       }
 
       ball1_x[i] = int2fix15(screen_width/2);
-      ball1_y[i] = int2fix15(0);
+      ball1_y[i] = int2fix15(ball_r_int);
       ball1_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
       ball1_vy[i] = int2fix15(0);
     }
@@ -482,6 +483,12 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       ball_num_total = ball_num_max * adc_value / 4096;
       ball_num0 = ball_num_total / 2;
 
+      // Store previous histogram height
+      for (int i = 0; i < peg_row - 1; i++)
+      {
+        histogram_height_prev0[i] = histogram_height[i];
+      }
+
       // Erase ball
       for (int i = 0; i < ball_num_max0; i++)
       {
@@ -521,10 +528,16 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       // Display histogram
       for (int i = 0; i < peg_row - 1; i++)
       {
-        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
-                 histogram_width, histogram_height_max, BLACK); // Clear previous histogram
-        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
-                 histogram_width - 2, histogram_height[i], histogram_color);
+        if (histogram_height[i] > histogram_height_prev0[i]) {
+          // Increase in height
+          fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
+                   histogram_width - 2, histogram_height[i] - histogram_height_prev0[i], histogram_color);
+        } else if (histogram_height[i] < histogram_height_prev0[i]) {
+          // Decrease in height
+          fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_prev0[i], 
+                   histogram_width, histogram_height_prev0[i] - histogram_height[i], BLACK);
+        }
+        histogram_height_prev0[i] = histogram_height[i];
       }
 
       // delay in accordance with frame rate
@@ -561,6 +574,12 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       ball_num_total = ball_num_max * adc_value / 4096;
       ball_num1 = ( ball_num_total + 1 ) / 2;
 
+      // Store previous histogram height
+      for (int i = 0; i < peg_row - 1; i++)
+      {
+        histogram_height_prev1[i] = histogram_height[i];
+      }
+
       // Erase ball
       for (int i = 0; i < ball_num_max1; i++)
       {
@@ -585,10 +604,16 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       // Display histogram
       for (int i = 0; i < peg_row - 1; i++)
       {
-        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
-                 histogram_width, histogram_height_max, BLACK); // Clear previous histogram
-        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
-                 histogram_width - 2, histogram_height[i], histogram_color);
+        if (histogram_height[i] > histogram_height_prev1[i]) {
+          // Increase in height
+          fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
+                   histogram_width - 2, histogram_height[i] - histogram_height_prev1[i], histogram_color);
+        } else if (histogram_height[i] < histogram_height_prev1[i]) {
+          // Decrease in height
+          fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_prev1[i], 
+                   histogram_width, histogram_height_prev1[i] - histogram_height[i], BLACK);
+        }
+        histogram_height_prev1[i] = histogram_height[i];
       }
 
       // delay in accordance with frame rate
@@ -710,6 +735,10 @@ int main(){
   adc_select_input(0);
   adc_value_raw = adc_read();
   adc_value = adc_value_raw;
+
+  ball_num_total = ball_num_max * adc_value / 4096;
+  ball_num0 = ball_num_total / 2;
+  ball_num1 = ( ball_num_total + 1 ) / 2;
 
   // Create peg
   createPeg();
