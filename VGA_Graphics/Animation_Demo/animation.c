@@ -46,6 +46,12 @@
 uint16_t adc_value_raw;
 int adc_value;
 
+// Control state
+#define CTRL_BALL_NUM    1
+#define CTRL_BOUNCINESS  2
+#define CTRL_GRAVITY     3
+int ctrl_state = CTRL_GRAVITY;
+
 // ============================================
 // ====== CODE FROM DMA DEMO STARTS HERE ======
 // ============================================
@@ -121,16 +127,16 @@ float bounciness_float = 0.42;
 fix15 bounciness;
 
 // Ball parameters
-#define ball_num_max 100  // Maximum number of balls
-#define ball_num_max0 (ball_num_max/2)  // Maximum number of balls on core 0
+#define ball_num_max 100                    // Maximum number of balls
+#define ball_num_max0 (ball_num_max/2)      // Maximum number of balls on core 0
 #define ball_num_max1 ((ball_num_max+1)/2)  // Maximum number of balls on core 1
-int ball_r_int = 4;       // Ball radius
+int ball_r_int = 4;   // Ball radius
 fix15 ball_r;
 
 // Number of balls
-int ball_num_total;      // Total number of balls
-int ball_num0;           // Number of balls on core 0 = ball_num_total / 2
-int ball_num1;           // Number of balls on core 1 = ( ball_num_total + 1 ) / 2
+int ball_num_total = ball_num_max;  // Total number of balls
+int ball_num0;                      // Number of balls on core 0 = ball_num_total / 2
+int ball_num1;                      // Number of balls on core 1 = ( ball_num_total + 1 ) / 2
 
 // Ball on core 0
 fix15 ball0_x[ball_num_max0];   // Ball position x on core 0
@@ -165,6 +171,7 @@ char text_line1[32];
 char text_line2[32];
 char text_line3[32];
 char text_line4[32];
+char text_line5[32];
 
 // Fall count
 int fall_count_total = 0;
@@ -480,7 +487,17 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       adc_value_raw = adc_read();
       adc_value = adc_value_raw;
 
-      ball_num_total = ball_num_max * adc_value / 4096;
+      if ( ctrl_state == CTRL_BALL_NUM )
+      {
+        ball_num_total = ball_num_max * adc_value / 4096;
+      } else if ( ctrl_state == CTRL_BOUNCINESS ) {
+        bounciness_float = (float)adc_value / 4096.0;
+        bounciness = float2fix15(bounciness_float);
+      } else if ( ctrl_state == CTRL_GRAVITY ) {
+        g_float = (float)adc_value / 4096.0;
+        g = float2fix15(g_float);
+      }
+
       ball_num0 = ball_num_total / 2;
 
       // Store previous histogram height
@@ -515,15 +532,18 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       sprintf(text_line1, "Current number of balls: %d", ball_num_total);
       sprintf(text_line2, "Re-spawn count: %d", fall_count_total);
       sprintf(text_line3, "Time: %d s", time_us_32()/1000000);
+      sprintf(text_line4, "Bounciness: %f", bounciness_float);
+      sprintf(text_line5, "Gravity: %f", g_float);
       setCursor(10, 10);
       writeString(text_line1);
       setCursor(10, 20);
       writeString(text_line2);
       setCursor(10, 30);
       writeString(text_line3);
-      // sprintf(text_line4, "ADC: %d", adc_value);
-      // setCursor(10, 40);
-      // writeString(text_line4);
+      setCursor(10, 40);
+      writeString(text_line4);
+      setCursor(10, 50);
+      writeString(text_line5);
 
       // Display histogram
       for (int i = 0; i < peg_row - 1; i++)
@@ -571,7 +591,17 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       adc_value_raw = adc_read();
       adc_value = adc_value_raw;
 
-      ball_num_total = ball_num_max * adc_value / 4096;
+      if ( ctrl_state == CTRL_BALL_NUM )
+      {
+        ball_num_total = ball_num_max * adc_value / 4096;
+      } else if ( ctrl_state == CTRL_BOUNCINESS ) {
+        bounciness_float = (float)adc_value / 4096.0;
+        bounciness = float2fix15(bounciness_float);
+      } else if ( ctrl_state == CTRL_GRAVITY ) {
+        g_float = (float)adc_value / 4096.0;
+        g = float2fix15(g_float);
+      }
+
       ball_num1 = ( ball_num_total + 1 ) / 2;
 
       // Store previous histogram height
@@ -736,7 +766,19 @@ int main(){
   adc_value_raw = adc_read();
   adc_value = adc_value_raw;
 
-  ball_num_total = ball_num_max * adc_value / 4096;
+  // Control state
+
+  if ( ctrl_state == CTRL_BALL_NUM )
+  {
+    ball_num_total = ball_num_max * adc_value / 4096;
+  } else if ( ctrl_state == CTRL_BOUNCINESS ) {
+    bounciness_float = (float)adc_value / 4096.0;
+    bounciness = float2fix15(bounciness_float);
+  } else if ( ctrl_state == CTRL_GRAVITY ) {
+    g_float = (float)adc_value / 4096.0;
+    g = float2fix15(g_float);
+  }
+
   ball_num0 = ball_num_total / 2;
   ball_num1 = ( ball_num_total + 1 ) / 2;
 
