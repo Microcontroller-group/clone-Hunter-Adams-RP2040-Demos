@@ -42,6 +42,11 @@
 // Include protothreads
 #include "pt_cornell_rp2040_v1_4.h"
 
+// Default values
+int ball_num_total = 128;          // Total number of balls (initial value)
+float bounciness_float = 0.38;   //initial value
+float g_float = 0.75;            //initial value
+
 // ADC
 #define ADC_PIN 26
 int adc_value_raw;
@@ -115,12 +120,6 @@ typedef signed int fix15 ;
 #define divfix(a,b) (fix15)(div_s64s64( (((signed long long)(a)) << 15), ((signed long long)(b))))
 #define sqrtfix(a) (float2fix15(sqrt(fix2float15(a))))
 
-// Wall detection
-// #define hitBottom(b) (b>int2fix15(380))
-// #define hitTop(b) (b<int2fix15(100))
-// #define hitLeft(a) (a<int2fix15(100))
-// #define hitRight(a) (a>int2fix15(540))
-
 // uS per frame
 #define FRAME_RATE 33000
 
@@ -129,15 +128,13 @@ typedef signed int fix15 ;
 #define screen_height  480
 
 // Colors
-char ball_color_0 =    WHITE;
-char ball_color_1 =    WHITE;
+char ball_color_0 =    YELLOW;
+char ball_color_1 =    BLUE;
 char peg_color =       GREEN;
 char histogram_color = WHITE;
 
 // Physics parameters
-float g_float = 0.75; //initial value
 fix15 g;
-float bounciness_float = 0.38; //initial value
 fix15 bounciness;
 
 // Ball parameters
@@ -148,7 +145,6 @@ int ball_r_int = 4;   // Ball radius
 fix15 ball_r;
 
 // Number of balls
-int ball_num_total = 640;  // Total number of balls (initial value)
 int ball_num0;                      // Number of balls on core 0 = ball_num_total / 2
 int ball_num0_prev;                 // Previous number of balls on core 0
 int ball_num1;                      // Number of balls on core 1 = ( ball_num_total + 1 ) / 2
@@ -263,7 +259,6 @@ static inline void moveBall0()
       fix15 dx = ball0_x[i] - peg_x[j];
       fix15 dy = ball0_y[i] - peg_y[j];
       if ( (abs(dx) < ball_r + peg_r) && (abs(dy) < ball_r + peg_r) )
-      // if ( (multfix15(dx, dx) + multfix15(dy, dy)) < multfix15((ball_r + peg_r), (ball_r + peg_r)) )
       {
         // fix15 distance = sqrtfix(multfix15(dx, dx) + multfix15(dy, dy));
         fix15 max;
@@ -345,10 +340,14 @@ static inline void moveBall0()
         histogram_height[p] = (fall_count[p] * histogram_height_max) / fall_count_max;
       }
 
-      ball0_x[i] = int2fix15(screen_width/2);
-      ball0_y[i] = int2fix15(ball_r_int);
-      ball0_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
-      ball0_vy[i] = int2fix15(0);
+      // ball0_x[i] = int2fix15(screen_width/2);
+      // ball0_y[i] = int2fix15(ball_r_int);
+      // ball0_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
+      // ball0_vy[i] = int2fix15(0);
+      ball0_x[i] = int2fix15(screen_width);
+      ball0_y[i] = int2fix15(screen_height/2 + 50);
+      ball0_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(10));
+      ball0_vy[i] = (fix15)((rand() & 0xffff) - int2fix15(20));
     }
 
     // Gravity
@@ -452,10 +451,14 @@ static inline void moveBall1()
         histogram_height[p] = (fall_count[p] * histogram_height_max) / fall_count_max;
       }
 
-      ball1_x[i] = int2fix15(screen_width/2);
-      ball1_y[i] = int2fix15(ball_r_int);
-      ball1_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
-      ball1_vy[i] = int2fix15(0);
+      // ball1_x[i] = int2fix15(screen_width/2);
+      // ball1_y[i] = int2fix15(ball_r_int);
+      // ball1_vx[i] = (fix15)((rand() & 0xffff) - int2fix15(1));
+      // ball1_vy[i] = int2fix15(0);
+      ball1_x[i] = int2fix15(0);
+      ball1_y[i] = int2fix15(screen_height/2 + 50);
+      ball1_vx[i] = (fix15)((rand() & 0xffff) + int2fix15(10));
+      ball1_vy[i] = (fix15)((rand() & 0xffff) - int2fix15(20));
     }
 
     // Gravity
@@ -507,9 +510,6 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
     // Variables for maintaining frame rate
     static int begin_time ;
     static int spare_time ;
-
-    // Create balls
-    // createBall0();  // Moved to main
 
     while(1) {
       // Measure time at start of thread
@@ -667,9 +667,6 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
     // Variables for maintaining frame rate
     static int begin_time ;
     static int spare_time ;
-
-    // Create balls
-    // createBall1();  // Moved to main
 
     while(1) {
       // Measure time at start of thread
@@ -894,8 +891,6 @@ int main(){
   adc_init();
   adc_gpio_init(ADC_PIN);
   adc_select_input(0);
-  // adc_value_raw = adc_read();
-  // adc_value_32 = ( adc_value_raw >> 7) + 1;  // Scale to 5 bits (1 to 32)
 
   // Initialize GPIO button
   gpio_init(BUTTON_PIN);
@@ -927,12 +922,6 @@ int main(){
   // Create balls
   createBall0();
   createBall1();
-
-  // Check screen dimensions
-  // fillCircle(            0,             0,  10,    BLUE );
-  // fillCircle( screen_width,             0,  10,    PINK );
-  // fillCircle( screen_width, screen_height,  10,   GREEN );
-  // fillCircle(            0, screen_height,  10,  YELLOW );
 
   // Display text settings
   setTextColor(WHITE);
