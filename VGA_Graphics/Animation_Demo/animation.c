@@ -44,8 +44,11 @@
 
 // ADC
 #define ADC_PIN 26
-uint16_t adc_value_raw;
-int adc_value;
+int adc_value_raw;
+int adc_value_32;
+int adc_value_raw_history[10] = {0};
+
+bool reset = false;
 
 // Control state
 #define CTRL_NONE        0
@@ -132,20 +135,20 @@ char peg_color =       GREEN;
 char histogram_color = WHITE;
 
 // Physics parameters
-float g_float = 0.75;
+float g_float = 0.75; //initial value
 fix15 g;
-float bounciness_float = 0.38;
+float bounciness_float = 0.38; //initial value
 fix15 bounciness;
 
 // Ball parameters
-#define ball_num_max 500                    // Maximum number of balls
+#define ball_num_max 800                    // Maximum number of balls
 #define ball_num_max0 (ball_num_max/2)      // Maximum number of balls on core 0
 #define ball_num_max1 ((ball_num_max+1)/2)  // Maximum number of balls on core 1
 int ball_r_int = 4;   // Ball radius
 fix15 ball_r;
 
 // Number of balls
-int ball_num_total = ball_num_max;  // Total number of balls
+int ball_num_total = 640;  // Total number of balls (initial value)
 int ball_num0;                      // Number of balls on core 0 = ball_num_total / 2
 int ball_num0_prev;                 // Previous number of balls on core 0
 int ball_num1;                      // Number of balls on core 1 = ( ball_num_total + 1 ) / 2
@@ -514,7 +517,33 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
 
       // ADC read
       adc_value_raw = adc_read();
-      adc_value = adc_value_raw;
+      for ( int i = 0; i < 9; i++)
+      {
+        adc_value_raw_history[i] = adc_value_raw_history[i+1];
+      }
+      adc_value_raw_history[9] = adc_value_raw;
+      if ( abs(adc_value_raw - adc_value_raw_history[0]) > 200 )
+      {
+        if ( ctrl_state != CTRL_NONE )
+        {
+          reset = true;
+        }
+      } else 
+      {
+        reset = false;
+      }
+      if ( reset )
+      {
+        fall_count_total = 0;
+        fall_count_max = 0;
+        for (int p = 0; p < peg_row - 1; p++)
+        {
+          fall_count[p] = 0;
+          histogram_height[p] = 0;
+        }
+      }
+      // adc_value = adc_value_raw;
+      adc_value_32 = ( adc_value_raw >> 7) + 1;  // Scale to 5 bits (1 to 32)
 
       // GPIO button read
       button_not_pushed = gpio_get(BUTTON_PIN);
@@ -526,13 +555,13 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
 
       if ( ctrl_state == CTRL_BALL_NUM )
       {
-        ball_num_total = ball_num_max * adc_value / 4096;
+        ball_num_total = ( (ball_num_max * adc_value_raw) >> 15 ) * 8;  // Scale to 0 to ball_num_max
       } else if ( ctrl_state == CTRL_BOUNCINESS ) {
-        bounciness_float = (float)adc_value / 4096.0;
-        bounciness = float2fix15(bounciness_float);
+        bounciness = ( int2fix15(adc_value_32) >> 5 );  // Scale to 0 to 1;
+        bounciness_float = fix2float15(bounciness);
       } else if ( ctrl_state == CTRL_GRAVITY ) {
-        g_float = (float)adc_value / 4096.0;
-        g = float2fix15(g_float);
+        g = ( int2fix15(adc_value_32) >> 5 );  // Scale to 0 to 1;
+        g_float = fix2float15(g);
       }
 
       ball_num0_prev = ball_num0;
@@ -566,7 +595,7 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       }
 
       // Display text
-      fillRect(0, 0, 200, 80, BLACK); // Clear previous text
+      fillRect(0, 0, 180, 70, BLACK);  // Clear previous text
       sprintf(text_line1, "Time: %d s", time_us_32()/1000000);
       sprintf(text_line2, "Re-spawn count: %d", fall_count_total);
       sprintf(text_line3, "Current number of balls: %d", ball_num_total);
@@ -582,31 +611,34 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       } else if ( ctrl_state == CTRL_GRAVITY ) {
         sprintf(text_line6, "Control: Gravity");
       }
-      setCursor(20, 10);
+      setCursor(10, 10);
       writeString(text_line1);
-      setCursor(20, 20);
+      setCursor(10, 20);
       writeString(text_line2);
-      setCursor(20, 30);
+      setCursor(10, 30);
       writeString(text_line3);
-      setCursor(20, 40);
+      setCursor(10, 40);
       writeString(text_line4);
-      setCursor(20, 50);
+      setCursor(10, 50);
       writeString(text_line5);
-      setCursor(20, 60);
+      setCursor(10, 60);
       writeString(text_line6);
 
       // Display histogram
+      if ( reset ) {
+        fillRect(histogram_start_x - 1, screen_height - histogram_height_max, 
+                 (peg_row - 1)*histogram_width + 2, histogram_height_max + 2, BLACK);
+      }
       for (int i = 0; i < peg_row - 1; i++)
       {
         if (histogram_height[i] > histogram_height_prev0[i]) {
           // Increase in height
           fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
                    histogram_width - 2, histogram_height[i] - histogram_height_prev0[i], histogram_color);
-        } else if (histogram_height[i] < histogram_height_prev0[i]) {
-          // Decrease in height
-          fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_prev0[i], 
-                   histogram_width, histogram_height_prev0[i] - histogram_height[i], BLACK);
         }
+        // Fill the top in black
+        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
+                 histogram_width - 2, histogram_height_max - histogram_height[i], BLACK);
         histogram_height_prev0[i] = histogram_height[i];
       }
 
@@ -645,7 +677,32 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
 
       // ADC read
       adc_value_raw = adc_read();
-      adc_value = adc_value_raw;
+      for ( int i = 0; i < 9; i++)
+      {
+        adc_value_raw_history[i] = adc_value_raw_history[i+1];
+      }
+      adc_value_raw_history[9] = adc_value_raw;
+      if ( abs(adc_value_raw - adc_value_raw_history[0]) > 200 )
+      {
+        if ( ctrl_state != CTRL_NONE )
+        {
+          reset = true;
+        }
+      } else 
+      {
+        reset = false;
+      }
+      if ( reset )
+      {
+        fall_count_total = 0;
+        fall_count_max = 0;
+        for (int p = 0; p < peg_row - 1; p++)
+        {
+          fall_count[p] = 0;
+          histogram_height[p] = 0;
+        }
+      }
+      adc_value_32 = ( adc_value_raw >> 7) + 1;  // Scale to 5 bits (1 to 32)
 
       // GPIO button read
       button_not_pushed = gpio_get(BUTTON_PIN);
@@ -657,13 +714,13 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
 
       if ( ctrl_state == CTRL_BALL_NUM )
       {
-        ball_num_total = ball_num_max * adc_value / 4096;
+        ball_num_total = ( (ball_num_max * adc_value_raw) >> 15 ) * 8;  // Scale to 0 to ball_num_max
       } else if ( ctrl_state == CTRL_BOUNCINESS ) {
-        bounciness_float = (float)adc_value / 4096.0;
-        bounciness = float2fix15(bounciness_float);
+        bounciness = ( int2fix15(adc_value_32) >> 5 );  // Scale to 0 to 1;
+        bounciness_float = fix2float15(bounciness);
       } else if ( ctrl_state == CTRL_GRAVITY ) {
-        g_float = (float)adc_value / 4096.0;
-        g = float2fix15(g_float);
+        g = ( int2fix15(adc_value_32) >> 5 );  // Scale to 0 to 1;
+        g_float = fix2float15(g);
       }
 
       ball_num1_prev = ball_num1;
@@ -697,17 +754,20 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       }
 
       // Display histogram
+      if ( reset ) {
+        fillRect(histogram_start_x - 1, screen_height - histogram_height_max, 
+                 (peg_row - 1)*histogram_width + 2, histogram_height_max + 2, BLACK);
+      }
       for (int i = 0; i < peg_row - 1; i++)
       {
         if (histogram_height[i] > histogram_height_prev1[i]) {
           // Increase in height
           fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
                    histogram_width - 2, histogram_height[i] - histogram_height_prev1[i], histogram_color);
-        } else if (histogram_height[i] < histogram_height_prev1[i]) {
-          // Decrease in height
-          fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_prev1[i], 
-                   histogram_width, histogram_height_prev1[i] - histogram_height[i], BLACK);
         }
+        // Fill the top in black
+        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
+                 histogram_width - 2, histogram_height_max - histogram_height[i], BLACK);
         histogram_height_prev1[i] = histogram_height[i];
       }
 
@@ -834,8 +894,8 @@ int main(){
   adc_init();
   adc_gpio_init(ADC_PIN);
   adc_select_input(0);
-  adc_value_raw = adc_read();
-  adc_value = adc_value_raw;
+  // adc_value_raw = adc_read();
+  // adc_value_32 = ( adc_value_raw >> 7) + 1;  // Scale to 5 bits (1 to 32)
 
   // Initialize GPIO button
   gpio_init(BUTTON_PIN);
@@ -846,17 +906,6 @@ int main(){
   gpio_init(LED_PIN);
   gpio_set_dir(LED_PIN, GPIO_OUT);
   gpio_put(LED_PIN, 0);
-
-  // Control state
-
-  if ( ctrl_state == CTRL_BALL_NUM )
-  {
-    ball_num_total = ball_num_max * adc_value / 4096;
-  } else if ( ctrl_state == CTRL_BOUNCINESS ) {
-    bounciness_float = (float)adc_value / 4096.0;
-  } else if ( ctrl_state == CTRL_GRAVITY ) {
-    g_float = (float)adc_value / 4096.0;
-  }
 
   ball_num0 = ball_num_total / 2;
   ball_num0_prev = ball_num0;
