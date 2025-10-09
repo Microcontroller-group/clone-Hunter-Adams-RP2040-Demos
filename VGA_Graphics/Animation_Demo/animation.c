@@ -43,7 +43,7 @@
 #include "pt_cornell_rp2040_v1_4.h"
 
 // Default values
-int ball_num_total = 1200;       // Total number of balls (initial value)
+int ball_num_total = 1400;       // Total number of balls (initial value)
 float bounciness_float = 0.38;   //initial value
 float g_float = 0.75;            //initial value
 
@@ -52,6 +52,7 @@ float g_float = 0.75;            //initial value
 int adc_value_raw;
 int adc_value_32;
 int adc_value_raw_history[10] = {0};
+int adc_history_index = 0;
 
 bool reset = false;
 
@@ -138,7 +139,7 @@ fix15 g;
 fix15 bounciness;
 
 // Ball parameters
-#define ball_num_max 1300                   // Maximum number of balls
+#define ball_num_max 1600                   // Maximum number of balls
 #define ball_num_max0 (ball_num_max/2)      // Maximum number of balls on core 0
 #define ball_num_max1 ((ball_num_max+1)/2)  // Maximum number of balls on core 1
 int ball_r_int = 4;   // Ball radius
@@ -515,12 +516,9 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
 
       // ADC read
       adc_value_raw = adc_read();
-      for ( int i = 0; i < 9; i++)
-      {
-        adc_value_raw_history[i] = adc_value_raw_history[i+1];
-      }
-      adc_value_raw_history[9] = adc_value_raw;
-      if ( abs(adc_value_raw - adc_value_raw_history[0]) > 200 )
+      adc_value_raw_history[adc_history_index] = adc_value_raw;
+      int oldest_index = (adc_history_index + 1) % 10;
+      if ( abs(adc_value_raw - adc_value_raw_history[oldest_index]) > 200 )
       {
         if ( ctrl_state != CTRL_NONE )
         {
@@ -530,6 +528,8 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       {
         reset = false;
       }
+      adc_history_index = (adc_history_index + 1) % 10;
+
       if ( reset )
       {
         fall_count_total = 0;
@@ -587,10 +587,10 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
       }
 
       // Draw pegs
-      for(int i = 0; i < peg_num; i++)
-      {
-        fillCircle(peg_x_int[i], peg_y_int[i], peg_r_int, peg_color);
-      }
+      // for(int i = 0; i < peg_num; i++)
+      // {
+      //   drawCircle(peg_x_int[i], peg_y_int[i], peg_r_int, peg_color);
+      // }
 
       // Display text
       fillRect(0, 0, 180, 70, BLACK);  // Clear previous text
@@ -627,17 +627,27 @@ static PT_THREAD (protothread_anim0(struct pt *pt))
         fillRect(histogram_start_x - 1, screen_height - histogram_height_max, 
                  (peg_row - 1)*histogram_width + 2, histogram_height_max + 2, BLACK);
       }
-      for (int i = 0; i < peg_row - 1; i++)
+      // for (int i = 0; i < peg_row - 1; i++)
+      // {
+      //   if (histogram_height[i] > histogram_height_prev0[i]) {
+      //     // Increase in height
+      //     fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
+      //              histogram_width - 2, histogram_height[i] - histogram_height_prev0[i], histogram_color);
+      //   }
+      //   // Fill the top in black
+      //   fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
+      //            histogram_width - 2, histogram_height_max - histogram_height[i], BLACK);
+      //   histogram_height_prev0[i] = histogram_height[i];
+      // }
+      for ( int i = 0; i < peg_row - 1; i++ )
       {
-        if (histogram_height[i] > histogram_height_prev0[i]) {
-          // Increase in height
-          fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
-                   histogram_width - 2, histogram_height[i] - histogram_height_prev0[i], histogram_color);
-        }
-        // Fill the top in black
-        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
-                 histogram_width - 2, histogram_height_max - histogram_height[i], BLACK);
-        histogram_height_prev0[i] = histogram_height[i];
+        // Erase previous histogram
+        drawRect( histogram_start_x + i*histogram_width, screen_height - histogram_height_prev0[i], 
+                  histogram_width - 2, histogram_height_prev0[i], BLACK ) ;
+
+        // Draw new histogram
+        drawRect( histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
+                  histogram_width - 2, histogram_height[i], histogram_color ) ;
       }
 
       // delay in accordance with frame rate
@@ -672,12 +682,9 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
 
       // ADC read
       adc_value_raw = adc_read();
-      for ( int i = 0; i < 9; i++)
-      {
-        adc_value_raw_history[i] = adc_value_raw_history[i+1];
-      }
-      adc_value_raw_history[9] = adc_value_raw;
-      if ( abs(adc_value_raw - adc_value_raw_history[0]) > 200 )
+      adc_value_raw_history[adc_history_index] = adc_value_raw;
+      int oldest_index = (adc_history_index + 1) % 10;
+      if ( abs(adc_value_raw - adc_value_raw_history[oldest_index]) > 200 )
       {
         if ( ctrl_state != CTRL_NONE )
         {
@@ -687,6 +694,8 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       {
         reset = false;
       }
+      adc_history_index = (adc_history_index + 1) % 10;
+
       if ( reset )
       {
         fall_count_total = 0;
@@ -745,7 +754,7 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
       // Draw pegs
       for(int i = 0; i < peg_num; i++)
       {
-        fillCircle(peg_x_int[i], peg_y_int[i], peg_r_int, peg_color);
+        drawCircle(peg_x_int[i], peg_y_int[i], peg_r_int, peg_color);
       }
 
       // Display histogram
@@ -753,17 +762,27 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
         fillRect(histogram_start_x - 1, screen_height - histogram_height_max, 
                  (peg_row - 1)*histogram_width + 2, histogram_height_max + 2, BLACK);
       }
-      for (int i = 0; i < peg_row - 1; i++)
+      // for (int i = 0; i < peg_row - 1; i++)
+      // {
+      //   if (histogram_height[i] > histogram_height_prev1[i]) {
+      //     // Increase in height
+      //     fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
+      //              histogram_width - 2, histogram_height[i] - histogram_height_prev1[i], histogram_color);
+      //   }
+      //   // Fill the top in black
+      //   fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
+      //            histogram_width - 2, histogram_height_max - histogram_height[i], BLACK);
+      //   histogram_height_prev1[i] = histogram_height[i];
+      // }
+      for ( int i = 0; i < peg_row - 1; i++ )
       {
-        if (histogram_height[i] > histogram_height_prev1[i]) {
-          // Increase in height
-          fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
-                   histogram_width - 2, histogram_height[i] - histogram_height_prev1[i], histogram_color);
-        }
-        // Fill the top in black
-        fillRect(histogram_start_x + i*histogram_width, screen_height - histogram_height_max, 
-                 histogram_width - 2, histogram_height_max - histogram_height[i], BLACK);
-        histogram_height_prev1[i] = histogram_height[i];
+        // Erase previous histogram
+        drawRect( histogram_start_x + i*histogram_width, screen_height - histogram_height_prev1[i], 
+                  histogram_width - 2, histogram_height_prev1[i], BLACK ) ;
+        
+        // Draw new histogram
+        drawRect( histogram_start_x + i*histogram_width, screen_height - histogram_height[i], 
+                  histogram_width - 2, histogram_height[i], histogram_color ) ;
       }
 
       // delay in accordance with frame rate
