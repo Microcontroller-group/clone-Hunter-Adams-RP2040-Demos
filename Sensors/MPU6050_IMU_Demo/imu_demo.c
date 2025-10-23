@@ -69,6 +69,10 @@ static struct pt_sem vga_semaphore ;
 #define CLKDIV  25.0
 uint slice_num ;
 
+// PWM duty cycle
+volatile int control = 0;
+volatile int old_control = 0;
+
 // Interrupt service routine
 void on_pwm_wrap() {
 
@@ -85,6 +89,13 @@ void on_pwm_wrap() {
     accel_angle = multfix15(float2fix15(atan2(filtered_az, -filtered_ay)), oneeightyoverpi);
     gyro_angle_delta = multfix15(gyro[0], zeropt001);
     complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
+
+    // Update duty cycle
+    if (control != old_control) {
+        pwm_set_chan_level(slice_num, PWM_CHAN_B, control);
+        pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
+        old_control = control;
+    }
 
     // Signal VGA to draw
     PT_SEM_SIGNAL(pt, &vga_semaphore);
@@ -208,6 +219,14 @@ static PT_THREAD (protothread_serial(struct pt *pt))
             if (test_in > 0) {
                 threshold = test_in ;
             }
+        } else if (classifier=='d') {
+            sprintf(pt_serial_out_buffer, "input a duty cycle (0-5000): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%d", &test_in);
+            if (test_in > 5000) continue;
+            else if (test_in < 0) continue;
+            else control = test_in;
         }
 
         // threshold = 20;
