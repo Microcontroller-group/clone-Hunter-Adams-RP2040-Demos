@@ -45,6 +45,10 @@
 
 // Arrays in which raw measurements will be stored
 fix15 acceleration[3], gyro[3];
+fix15 accel_angle;
+fix15 gyro_angle_delta;
+fix15 filtered_ay, filtered_az;
+fix15 complementary_angle;
 
 // character array
 char screentext[40];
@@ -76,6 +80,11 @@ void on_pwm_wrap() {
     // If you want these values in floating point, call fix2float15() on
     // the raw measurements.
     mpu6050_read_raw(acceleration, gyro);
+    filtered_ay = filtered_ay + ( (acceleration[1] - filtered_ay) >> 4 );
+    filtered_az = filtered_az + ( (acceleration[2] - filtered_az) >> 4 );
+    accel_angle = multfix15(float2fix15(atan2(filtered_az, -filtered_ay)), oneeightyoverpi);
+    gyro_angle_delta = multfix15(gyro[0], zeropt001);
+    complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
 
     // Signal VGA to draw
     PT_SEM_SIGNAL(pt, &vga_semaphore);
@@ -118,18 +127,21 @@ static PT_THREAD (protothread_vga(struct pt *pt))
     setCursor(50, 425) ;
     writeString(screentext) ;
 
-    // Draw top plot
+    // Draw top plot (Complementary filter angle)
     drawHLine(75, 230, 5, CYAN) ;
     drawHLine(75, 155, 5, CYAN) ;
     drawHLine(75, 80, 5, CYAN) ;
     drawVLine(80, 80, 150, CYAN) ;
-    sprintf(screentext, "0") ;
+    // sprintf(screentext, "0") ;
+    sprintf(screentext, "90") ;
     setCursor(50, 150) ;
     writeString(screentext) ;
-    sprintf(screentext, "+250") ;
+    // sprintf(screentext, "+250") ;
+    sprintf(screentext, "180") ;
     setCursor(45, 75) ;
     writeString(screentext) ;
-    sprintf(screentext, "-250") ;
+    // sprintf(screentext, "-250") ;
+    sprintf(screentext, "0") ;
     setCursor(45, 225) ;
     writeString(screentext) ;
     
@@ -152,10 +164,11 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
             drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
 
-            // Draw top plot
-            drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
-            drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[1]))-OldMin)/OldRange)), RED) ;
-            drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[2]))-OldMin)/OldRange)), GREEN) ;
+            // Draw top plot (Complementary filter angle)
+            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
+            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[1]))-OldMin)/OldRange)), RED) ;
+            // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[2]))-OldMin)/OldRange)), GREEN) ;
+            drawPixel(xcoord, 155 + 150 - (int)(NewRange*((float)(fix2float15(complementary_angle)*250.0/90.0-OldMin)/OldRange)), YELLOW) ;
 
             // Update horizontal cursor
             if (xcoord < 609) {
@@ -196,6 +209,10 @@ static PT_THREAD (protothread_serial(struct pt *pt))
                 threshold = test_in ;
             }
         }
+
+        // threshold = 20;
+        // sprintf(pt_serial_out_buffer, "Complemetary filter angle: %.2f degrees\r\n", fix2float15(complementary_angle));
+        // serial_write ;
     }
     PT_END(pt) ;
 }
