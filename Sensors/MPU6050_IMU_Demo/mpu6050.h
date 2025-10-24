@@ -26,7 +26,6 @@ typedef signed int fix15 ;
 #define zeropt99 64880
 #define zeropt1 6553
 #define zeropt9 58982
-#define PI 3.14159265358979323846
 
 // VGA primitives - usable in main
 void mpu6050_reset(void) ;

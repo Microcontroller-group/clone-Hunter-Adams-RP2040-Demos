@@ -43,12 +43,23 @@
 #include "mpu6050.h"
 #include "pt_cornell_rp2040_v1_4.h"
 
+int TEST = 0;
+
 // Arrays in which raw measurements will be stored
 fix15 acceleration[3], gyro[3];
 fix15 accel_angle;
 fix15 gyro_angle_delta;
 fix15 filtered_ay, filtered_az;
 fix15 complementary_angle;
+
+// PID control parameters
+fix15 Kp = float2fix15(30.0);
+fix15 Ki = float2fix15(20.0);
+fix15 Kd = float2fix15(5000.0);
+fix15 target_angle = int2fix15(0);
+fix15 current_angle = int2fix15(0);
+fix15 error_angle;
+fix15 error_sum = int2fix15(0);
 
 // character array
 char screentext[40];
@@ -70,7 +81,7 @@ static struct pt_sem vga_semaphore ;
 uint slice_num ;
 
 // PWM duty cycle
-volatile int control = 0;
+volatile int control = 0;  // Duty cycle (0-5000)
 volatile int old_control = 0;
 
 // Interrupt service routine
@@ -89,6 +100,17 @@ void on_pwm_wrap() {
     accel_angle = multfix15(float2fix15(atan2(filtered_az, -filtered_ay)), oneeightyoverpi);
     gyro_angle_delta = multfix15(gyro[0], zeropt001);
     complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
+
+    // PID control
+    current_angle = complementary_angle;
+    error_angle = current_angle - target_angle;
+    error_sum = error_sum + multfix15(error_angle, zeropt001);
+    // Prevent error sum overflow
+    if (error_sum > int2fix15(500)) error_sum = int2fix15(500);
+    else if (error_sum < int2fix15(-500)) error_sum = int2fix15(-500);
+    control = fix2int15( - multfix15(Kp, error_angle) - multfix15(Ki, error_sum) - multfix15(Kd, gyro_angle_delta));
+    if (control > 3000) control = 3000;
+    else if (control < 0) control = 0;
 
     // Update duty cycle
     if (control != old_control) {
@@ -128,13 +150,16 @@ static PT_THREAD (protothread_vga(struct pt *pt))
     drawHLine(75, 355, 5, CYAN) ;
     drawHLine(75, 280, 5, CYAN) ;
     drawVLine(80, 280, 150, CYAN) ;
-    sprintf(screentext, "0") ;
+    // sprintf(screentext, "0") ;
+    sprintf(screentext, "0.5") ;
     setCursor(50, 350) ;
     writeString(screentext) ;
-    sprintf(screentext, "+2") ;
+    // sprintf(screentext, "+2") ;
+    sprintf(screentext, "1.0") ;
     setCursor(50, 280) ;
     writeString(screentext) ;
-    sprintf(screentext, "-2") ;
+    // sprintf(screentext, "-2") ;
+    sprintf(screentext, "0.0") ;
     setCursor(50, 425) ;
     writeString(screentext) ;
 
@@ -170,16 +195,19 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             // Erase a column
             drawVLine(xcoord, 0, 480, BLACK) ;
 
-            // Draw bottom plot (multiply by 120 to scale from +/-2 to +/-250)
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
+            // Draw bottom plot (PWM duty cycle)
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
+            // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
+            drawPixel(xcoord, 430 - (int)(NewRange*((float)(control*500/5000)/OldRange)), YELLOW) ;
 
             // Draw top plot (Complementary filter angle)
             // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
             // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[1]))-OldMin)/OldRange)), RED) ;
             // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[2]))-OldMin)/OldRange)), GREEN) ;
-            drawPixel(xcoord, 155 + 150 - (int)(NewRange*((float)(fix2float15(complementary_angle)*250.0/90.0-OldMin)/OldRange)), YELLOW) ;
+            drawPixel(xcoord, 230 - (int)(NewRange*((float)(fix2float15(complementary_angle)*500.0/180.0)/OldRange)), YELLOW) ;
+            // Draw target angle line
+            drawPixel(xcoord, 230 - (int)(NewRange*((float)(fix2float15(target_angle)*500.0/180.0)/OldRange)), CYAN) ;
 
             // Update horizontal cursor
             if (xcoord < 609) {
@@ -227,11 +255,63 @@ static PT_THREAD (protothread_serial(struct pt *pt))
             if (test_in > 5000) continue;
             else if (test_in < 0) continue;
             else control = test_in;
+        } else if (classifier=='a') {
+            sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%d", &test_in);
+            if (test_in > 180) continue;
+            else if (test_in < 0) continue;
+            else target_angle = int2fix15(test_in);
+        } else if (classifier=='p') {
+            sprintf(pt_serial_out_buffer, "input Kp (float): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%f", &float_in);
+            if (float_in < 0) continue;
+            else Kp = float2fix15(float_in);
+
+            sprintf(pt_serial_out_buffer, "input Ki (float): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%f", &float_in);
+            if (float_in < 0) continue;
+            else Ki = float2fix15(float_in);
+
+            sprintf(pt_serial_out_buffer, "input Kd (float): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%f", &float_in);
+            if (float_in < 0) continue;
+            else Kd = float2fix15(float_in);
         }
 
-        // threshold = 20;
-        // sprintf(pt_serial_out_buffer, "Complemetary filter angle: %.2f degrees\r\n", fix2float15(complementary_angle));
-        // serial_write ;
+        // if (TEST==1) {
+        //     // Print complementary angle
+        //     sprintf(pt_serial_out_buffer, "Current Angle: %.2f deg\r\n", fix2float15(complementary_angle));
+        //     serial_write;
+        // } else {
+        //     sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
+        //     serial_write;
+        //     serial_read;
+        //     sscanf(pt_serial_in_buffer,"%d", &test_in);
+        //     if (test_in > 180) continue;
+        //     else if (test_in < 0) continue;
+        //     else target_angle = int2fix15(test_in);
+        // }
+
+        // sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
+        // serial_write;
+        // serial_read;
+        // sscanf(pt_serial_in_buffer,"%d", &test_in);
+        // if (test_in > 180) continue;
+        // else if (test_in < 0) continue;
+        // else target_angle = int2fix15(test_in);
+
+        // // Print complementary angle
+        // sprintf(pt_serial_out_buffer, "Current Angle: %.2f deg\r\n", fix2float15(complementary_angle));
+        // serial_write;
+
     }
     PT_END(pt) ;
 }
