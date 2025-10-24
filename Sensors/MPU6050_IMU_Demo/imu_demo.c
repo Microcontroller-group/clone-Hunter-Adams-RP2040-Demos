@@ -54,8 +54,8 @@ fix15 complementary_angle;
 
 // PID control parameters
 fix15 Kp = float2fix15(30.0);
-fix15 Ki = float2fix15(20.0);
-fix15 Kd = float2fix15(5000.0);
+fix15 Ki = float2fix15(60.0);
+fix15 Kd = float2fix15(10000.0);
 fix15 target_angle = int2fix15(0);
 fix15 current_angle = int2fix15(0);
 fix15 error_angle;
@@ -83,6 +83,7 @@ uint slice_num ;
 // PWM duty cycle
 volatile int control = 0;  // Duty cycle (0-5000)
 volatile int old_control = 0;
+int control_filtered = 0 ;
 
 // Interrupt service routine
 void on_pwm_wrap() {
@@ -118,6 +119,8 @@ void on_pwm_wrap() {
         pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
         old_control = control;
     }
+
+    control_filtered = control_filtered + ( (control - control_filtered) >> 4 );
 
     // Signal VGA to draw
     PT_SEM_SIGNAL(pt, &vga_semaphore);
@@ -199,7 +202,7 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
             // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[1])*120.0)-OldMin)/OldRange)), RED) ;
             // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[2])*120.0)-OldMin)/OldRange)), GREEN) ;
-            drawPixel(xcoord, 430 - (int)(NewRange*((float)(control*500/5000)/OldRange)), YELLOW) ;
+            drawPixel(xcoord, 430 - (int)(NewRange*((float)(control_filtered*500/5000)/OldRange)), YELLOW) ;
 
             // Draw top plot (Complementary filter angle)
             // drawPixel(xcoord, 230 - (int)(NewRange*((float)((fix2float15(gyro[0]))-OldMin)/OldRange)), WHITE) ;
@@ -230,32 +233,63 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     static int test_in ;
     static float float_in ;
     while(1) {
-        sprintf(pt_serial_out_buffer, "input a command: ");
-        serial_write ;
-        // spawn a thread to do the non-blocking serial read
-        serial_read ;
-        // convert input string to number
-        sscanf(pt_serial_in_buffer,"%c", &classifier) ;
-
-        // num_independents = test_in ;
-        if (classifier=='t') {
-            sprintf(pt_serial_out_buffer, "timestep: ");
+        if ( TEST == 1 ) {
+            sprintf(pt_serial_out_buffer, "input a command: ");
             serial_write ;
+            // spawn a thread to do the non-blocking serial read
             serial_read ;
             // convert input string to number
-            sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-            if (test_in > 0) {
-                threshold = test_in ;
+            sscanf(pt_serial_in_buffer,"%c", &classifier) ;
+
+            // num_independents = test_in ;
+            if (classifier=='t') {
+                sprintf(pt_serial_out_buffer, "timestep: ");
+                serial_write ;
+                serial_read ;
+                // convert input string to number
+                sscanf(pt_serial_in_buffer,"%d", &test_in) ;
+                if (test_in > 0) {
+                    threshold = test_in ;
+                }
+            } else if (classifier=='d') {
+                sprintf(pt_serial_out_buffer, "input a duty cycle (0-5000): ");
+                serial_write;
+                serial_read;
+                sscanf(pt_serial_in_buffer,"%d", &test_in);
+                if (test_in > 5000) continue;
+                else if (test_in < 0) continue;
+                else control = test_in;
+            } else if (classifier=='a') {
+                sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
+                serial_write;
+                serial_read;
+                sscanf(pt_serial_in_buffer,"%d", &test_in);
+                if (test_in > 180) continue;
+                else if (test_in < 0) continue;
+                else target_angle = int2fix15(test_in);
+            } else if (classifier=='p') {
+                sprintf(pt_serial_out_buffer, "input Kp (float): ");
+                serial_write;
+                serial_read;
+                sscanf(pt_serial_in_buffer,"%f", &float_in);
+                if (float_in < 0) continue;
+                else Kp = float2fix15(float_in);
+
+                sprintf(pt_serial_out_buffer, "input Ki (float): ");
+                serial_write;
+                serial_read;
+                sscanf(pt_serial_in_buffer,"%f", &float_in);
+                if (float_in < 0) continue;
+                else Ki = float2fix15(float_in);
+
+                sprintf(pt_serial_out_buffer, "input Kd (float): ");
+                serial_write;
+                serial_read;
+                sscanf(pt_serial_in_buffer,"%f", &float_in);
+                if (float_in < 0) continue;
+                else Kd = float2fix15(float_in);
             }
-        } else if (classifier=='d') {
-            sprintf(pt_serial_out_buffer, "input a duty cycle (0-5000): ");
-            serial_write;
-            serial_read;
-            sscanf(pt_serial_in_buffer,"%d", &test_in);
-            if (test_in > 5000) continue;
-            else if (test_in < 0) continue;
-            else control = test_in;
-        } else if (classifier=='a') {
+        } else {
             sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
             serial_write;
             serial_read;
@@ -263,54 +297,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
             if (test_in > 180) continue;
             else if (test_in < 0) continue;
             else target_angle = int2fix15(test_in);
-        } else if (classifier=='p') {
-            sprintf(pt_serial_out_buffer, "input Kp (float): ");
-            serial_write;
-            serial_read;
-            sscanf(pt_serial_in_buffer,"%f", &float_in);
-            if (float_in < 0) continue;
-            else Kp = float2fix15(float_in);
-
-            sprintf(pt_serial_out_buffer, "input Ki (float): ");
-            serial_write;
-            serial_read;
-            sscanf(pt_serial_in_buffer,"%f", &float_in);
-            if (float_in < 0) continue;
-            else Ki = float2fix15(float_in);
-
-            sprintf(pt_serial_out_buffer, "input Kd (float): ");
-            serial_write;
-            serial_read;
-            sscanf(pt_serial_in_buffer,"%f", &float_in);
-            if (float_in < 0) continue;
-            else Kd = float2fix15(float_in);
         }
-
-        // if (TEST==1) {
-        //     // Print complementary angle
-        //     sprintf(pt_serial_out_buffer, "Current Angle: %.2f deg\r\n", fix2float15(complementary_angle));
-        //     serial_write;
-        // } else {
-        //     sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
-        //     serial_write;
-        //     serial_read;
-        //     sscanf(pt_serial_in_buffer,"%d", &test_in);
-        //     if (test_in > 180) continue;
-        //     else if (test_in < 0) continue;
-        //     else target_angle = int2fix15(test_in);
-        // }
-
-        // sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
-        // serial_write;
-        // serial_read;
-        // sscanf(pt_serial_in_buffer,"%d", &test_in);
-        // if (test_in > 180) continue;
-        // else if (test_in < 0) continue;
-        // else target_angle = int2fix15(test_in);
-
-        // // Print complementary angle
-        // sprintf(pt_serial_out_buffer, "Current Angle: %.2f deg\r\n", fix2float15(complementary_angle));
-        // serial_write;
 
     }
     PT_END(pt) ;
