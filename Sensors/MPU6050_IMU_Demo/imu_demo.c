@@ -45,21 +45,33 @@
 
 int TEST = 0;
 
+// Button and sequence control
+#define BUTTON_PIN 2
+volatile int button_pressed = 0;
+volatile int button_held = 0;
+volatile int sequence_active = 0;
+volatile uint32_t sequence_start_time = 0;
+volatile uint32_t sequence_timer = 0;
+volatile int motor_disabled = 0;
+
+
 // Arrays in which raw measurements will be stored
 fix15 acceleration[3], gyro[3];
 fix15 accel_angle;
 fix15 gyro_angle_delta;
+fix15 angular_velocity;
 fix15 filtered_ay, filtered_az;
 fix15 complementary_angle;
 
 // PID control parameters
-fix15 Kp = float2fix15(30.0);
-fix15 Ki = float2fix15(60.0);
-fix15 Kd = float2fix15(10000.0);
+fix15 Kp = float2fix15(50.0);
+fix15 Ki = float2fix15(50.0);
+fix15 Kd = float2fix15(15.0);
 fix15 target_angle = int2fix15(0);
 fix15 current_angle = int2fix15(0);
 fix15 error_angle;
 fix15 error_sum = int2fix15(0);
+volatile int parameter_update = 1;
 
 // character array
 char screentext[40];
@@ -100,18 +112,52 @@ void on_pwm_wrap() {
     filtered_az = filtered_az + ( (acceleration[2] - filtered_az) >> 4 );
     accel_angle = multfix15(float2fix15(atan2(filtered_az, -filtered_ay)), oneeightyoverpi);
     gyro_angle_delta = multfix15(gyro[0], zeropt001);
+    angular_velocity = gyro[0];
     complementary_angle = multfix15(complementary_angle + gyro_angle_delta, zeropt999) + multfix15(accel_angle, zeropt001);
+
+    // Handle sequence timing (1kHz ISR = 1ms per call)
+    if (sequence_active) {
+        sequence_timer++;
+
+        // Update target angle based on sequence time
+        if (sequence_timer < 5000) {
+            // 0-5 seconds: horizontal (90 degrees)
+            if ( target_angle != int2fix15(90) ) parameter_update = 1;
+            target_angle = int2fix15(90);
+        } else if (sequence_timer < 10000) {
+            // 5-10 seconds: 30 degrees above horizontal (120 degrees)
+            if ( target_angle != int2fix15(120) ) parameter_update = 1;
+            target_angle = int2fix15(120);
+        } else if (sequence_timer < 15000) {
+            // 10-15 seconds: 30 degrees below horizontal (60 degrees)
+            if ( target_angle != int2fix15(60) ) parameter_update = 1;
+            target_angle = int2fix15(60);
+        } else if (sequence_timer < 20000) {
+            // 15-20 seconds: back to horizontal (90 degrees)
+            if ( target_angle != int2fix15(90) ) parameter_update = 1;
+            target_angle = int2fix15(90);
+        } else {
+            // Sequence complete
+            sequence_active = 0;
+            sequence_timer = 0;
+        }
+    }
 
     // PID control
     current_angle = complementary_angle;
     error_angle = current_angle - target_angle;
     error_sum = error_sum + multfix15(error_angle, zeropt001);
-    // Prevent error sum overflow
-    if (error_sum > int2fix15(500)) error_sum = int2fix15(500);
-    else if (error_sum < int2fix15(-500)) error_sum = int2fix15(-500);
-    control = fix2int15( - multfix15(Kp, error_angle) - multfix15(Ki, error_sum) - multfix15(Kd, gyro_angle_delta));
-    if (control > 3000) control = 3000;
-    else if (control < 0) control = 0;
+
+    if ( error_sum > int2fix15(50) ) error_sum = int2fix15(50);
+    else if ( error_sum < int2fix15(-50) ) error_sum = int2fix15(-50);
+
+    if ( motor_disabled ) {
+        control = 0;
+    } else {
+        control = fix2int15( - multfix15(Kp, error_angle) - multfix15(Ki, error_sum) - multfix15(Kd, angular_velocity) );
+        if (control > 2300) control = 2300;
+        else if (control < 0) control = 0;
+    }
 
     // Update duty cycle
     if (control != old_control) {
@@ -124,6 +170,28 @@ void on_pwm_wrap() {
 
     // Signal VGA to draw
     PT_SEM_SIGNAL(pt, &vga_semaphore);
+}
+
+// Button interrupt handler
+void button_irq_handler(uint gpio, uint32_t events) {
+    if (gpio == BUTTON_PIN) {
+        // Button pressed (falling edge) - disable motor, arm hangs down
+        if (events & GPIO_IRQ_EDGE_FALL) {
+            motor_disabled = 1;
+            sequence_active = 0;
+            sequence_timer = 0;
+        }
+        // Button released (rising edge) - enable motor and start sequence
+        else if (events & GPIO_IRQ_EDGE_RISE) {
+            motor_disabled = 0;
+            sequence_active = 1;
+            sequence_timer = 0;
+            // First target: horizontal (90 degrees)
+            parameter_update = 1;
+            target_angle = int2fix15(90);
+            error_sum = int2fix15(0);
+        }
+    }
 }
 
 // Thread that draws to VGA display
@@ -183,7 +251,6 @@ static PT_THREAD (protothread_vga(struct pt *pt))
     sprintf(screentext, "0") ;
     setCursor(45, 225) ;
     writeString(screentext) ;
-    
 
     while (true) {
         // Wait on semaphore
@@ -196,7 +263,7 @@ static PT_THREAD (protothread_vga(struct pt *pt))
             throttle = 0 ;
 
             // Erase a column
-            drawVLine(xcoord, 0, 480, BLACK) ;
+            drawVLine(xcoord, 80, 480, BLACK) ;
 
             // Draw bottom plot (PWM duty cycle)
             // drawPixel(xcoord, 430 - (int)(NewRange*((float)((fix2float15(acceleration[0])*120.0)-OldMin)/OldRange)), WHITE) ;
@@ -220,6 +287,36 @@ static PT_THREAD (protothread_vga(struct pt *pt))
                 xcoord = 81 ;
             }
         }
+
+        // Top graph title
+        sprintf(screentext, "Beam angle (degrees)") ;
+        setCursor(240, 55) ;
+        writeString(screentext);
+        // Bottom graph title
+        sprintf(screentext, "PWM duty cycle (0.0-1.0)") ;
+        setCursor(240, 260) ;
+        writeString(screentext);
+
+        // Current PID parameters
+        if ( parameter_update ) {
+            parameter_update = 0 ;
+            // Delete previous text
+            fillRect(0, 0, 180, 70, BLACK) ;
+            // Write new text
+            sprintf(screentext, "Target beam angle: %d", fix2int15(target_angle)) ;
+            setCursor(20, 10) ;
+            writeString(screentext);
+            sprintf(screentext, "Kp: %.2f", fix2float15(Kp)) ;
+            setCursor(20, 25) ;
+            writeString(screentext);
+            sprintf(screentext, "Ki: %.2f", fix2float15(Ki)) ;
+            setCursor(20, 40) ;
+            writeString(screentext);
+            sprintf(screentext, "Kd: %.2f", fix2float15(Kd)) ;
+            setCursor(20, 55) ;
+            writeString(screentext);
+        }
+
     }
     // Indicate end of thread
     PT_END(pt);
@@ -233,70 +330,80 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     static int test_in ;
     static float float_in ;
     while(1) {
-        if ( TEST == 1 ) {
-            sprintf(pt_serial_out_buffer, "input a command: ");
-            serial_write ;
-            // spawn a thread to do the non-blocking serial read
-            serial_read ;
-            // convert input string to number
-            sscanf(pt_serial_in_buffer,"%c", &classifier) ;
-
-            // num_independents = test_in ;
-            if (classifier=='t') {
-                sprintf(pt_serial_out_buffer, "timestep: ");
-                serial_write ;
-                serial_read ;
-                // convert input string to number
-                sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-                if (test_in > 0) {
-                    threshold = test_in ;
-                }
-            } else if (classifier=='d') {
-                sprintf(pt_serial_out_buffer, "input a duty cycle (0-5000): ");
-                serial_write;
-                serial_read;
-                sscanf(pt_serial_in_buffer,"%d", &test_in);
-                if (test_in > 5000) continue;
-                else if (test_in < 0) continue;
-                else control = test_in;
-            } else if (classifier=='a') {
-                sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
-                serial_write;
-                serial_read;
-                sscanf(pt_serial_in_buffer,"%d", &test_in);
-                if (test_in > 180) continue;
-                else if (test_in < 0) continue;
-                else target_angle = int2fix15(test_in);
-            } else if (classifier=='p') {
-                sprintf(pt_serial_out_buffer, "input Kp (float): ");
-                serial_write;
-                serial_read;
-                sscanf(pt_serial_in_buffer,"%f", &float_in);
-                if (float_in < 0) continue;
-                else Kp = float2fix15(float_in);
-
-                sprintf(pt_serial_out_buffer, "input Ki (float): ");
-                serial_write;
-                serial_read;
-                sscanf(pt_serial_in_buffer,"%f", &float_in);
-                if (float_in < 0) continue;
-                else Ki = float2fix15(float_in);
-
-                sprintf(pt_serial_out_buffer, "input Kd (float): ");
-                serial_write;
-                serial_read;
-                sscanf(pt_serial_in_buffer,"%f", &float_in);
-                if (float_in < 0) continue;
-                else Kd = float2fix15(float_in);
-            }
-        } else {
-            sprintf(pt_serial_out_buffer, "input target angle (0-180): ");
+        sprintf(pt_serial_out_buffer, "Set desired beam angle: enter \"a\"\r\n");
+        serial_write;
+        sprintf(pt_serial_out_buffer, "Set proportional gain: enter \"p\"\r\n");
+        serial_write;
+        sprintf(pt_serial_out_buffer, "Set integral gain: enter \"i\"\r\n");
+        serial_write;
+        sprintf(pt_serial_out_buffer, "Set derivative gain: enter \"d\"\r\n");
+        serial_write;
+        sprintf(pt_serial_out_buffer, "Reset PID parameters: enter \"r\"\r\n");
+        serial_write;
+        sprintf(pt_serial_out_buffer, "Print current PID parameters: enter \"c\"\r\n");
+        serial_write;
+        sprintf(pt_serial_out_buffer, "Set threshold: enter \"t\"\r\n");
+        serial_write;
+        serial_read;
+        sscanf(pt_serial_in_buffer,"%c", &classifier);
+        if (classifier=='a') {
+            sprintf(pt_serial_out_buffer, "Input target angle (0-180): ");
             serial_write;
             serial_read;
             sscanf(pt_serial_in_buffer,"%d", &test_in);
             if (test_in > 180) continue;
             else if (test_in < 0) continue;
             else target_angle = int2fix15(test_in);
+            parameter_update = 1;
+        } else if (classifier=='p') {
+            sprintf(pt_serial_out_buffer, "Input Kp (float): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%f", &float_in);
+            if (float_in < 0) continue;
+            else Kp = float2fix15(float_in);
+            parameter_update = 1;
+        } else if (classifier=='i') {
+            sprintf(pt_serial_out_buffer, "Input Ki (float): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%f", &float_in);
+            if (float_in < 0) continue;
+            else Ki = float2fix15(float_in);
+            parameter_update = 1;
+        } else if (classifier=='d') {
+            sprintf(pt_serial_out_buffer, "Input Kd (float): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%f", &float_in);
+            if (float_in < 0) continue;
+            else Kd = float2fix15(float_in);
+            parameter_update = 1;
+        } else if (classifier=='r') {
+            Kp = float2fix15(50.0);
+            Ki = float2fix15(50.0);
+            Kd = float2fix15(15.0);
+            parameter_update = 1;
+        } else if (classifier=='c') {
+            sprintf(pt_serial_out_buffer, "Current PID parameters:\r\n");
+            serial_write;
+            sprintf(pt_serial_out_buffer, "Kp: %.2f\r\n", fix2float15(Kp));
+            serial_write;
+            sprintf(pt_serial_out_buffer, "Ki: %.2f\r\n", fix2float15(Ki));
+            serial_write;
+            sprintf(pt_serial_out_buffer, "Kd: %.2f\r\n", fix2float15(Kd));
+            serial_write;
+        } else if ( classifier=='t') {
+            sprintf(pt_serial_out_buffer, "Input threshold (1-100): ");
+            serial_write;
+            serial_read;
+            sscanf(pt_serial_in_buffer,"%d", &test_in);
+            if (test_in < 1) continue;
+            else if (test_in > 100) continue;
+            else threshold = test_in ;
+        } else {
+            sprintf(pt_serial_out_buffer, "Invalid command\r\n");
+            serial_write;
         }
 
     }
@@ -319,6 +426,17 @@ int main() {
 
     // Initialize VGA
     initVGA() ;
+
+    ////////////////////////////////////////////////////////////////////////
+    ///////////////////////// BUTTON CONFIGURATION /////////////////////////
+    ////////////////////////////////////////////////////////////////////////
+    // Initialize button GPIO
+    gpio_init(BUTTON_PIN);
+    gpio_set_dir(BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_PIN);
+
+    // Set up button interrupt on both falling edge (press) and rising edge (release)
+    gpio_set_irq_enabled_with_callback(BUTTON_PIN, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true, &button_irq_handler);
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// I2C CONFIGURATION ////////////////////////////
