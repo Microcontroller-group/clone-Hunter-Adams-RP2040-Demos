@@ -85,11 +85,43 @@ volatile int control = 0;  // Duty cycle (0-5000)
 volatile int old_control = 0;
 int control_filtered = 0 ;
 
+// Button and sequence control
+#define BUTTON_PIN 2
+volatile int button_pressed = 0;
+volatile int button_held = 0;
+volatile int sequence_active = 0;
+volatile uint32_t sequence_start_time = 0;
+volatile uint32_t sequence_timer = 0;
+
 // Interrupt service routine
 void on_pwm_wrap() {
 
     // Clear the interrupt flag that brought us here
     pwm_clear_irq(pwm_gpio_to_slice_num(5));
+
+    // Handle sequence timing (1kHz ISR = 1ms per call)
+    if (sequence_active) {
+        sequence_timer++;
+        
+        // Update target angle based on sequence time
+        if (sequence_timer < 5000) {
+            // 0-5 seconds: horizontal (90 degrees)
+            target_angle = int2fix15(90);
+        } else if (sequence_timer < 10000) {
+            // 5-10 seconds: 30 degrees above horizontal (120 degrees)
+            target_angle = int2fix15(120);
+        } else if (sequence_timer < 15000) {
+            // 10-15 seconds: 30 degrees below horizontal (60 degrees)
+            target_angle = int2fix15(60);
+        } else if (sequence_timer < 20000) {
+            // 15-20 seconds: back to horizontal (90 degrees)
+            target_angle = int2fix15(90);
+        } else {
+            // Sequence complete
+            sequence_active = 0;
+            sequence_timer = 0;
+        }
+    }
 
     // Read the IMU
     // NOTE! This is in 15.16 fixed point. Accel in g's, gyro in deg/s
@@ -303,6 +335,21 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     PT_END(pt) ;
 }
 
+// Button interrupt handler
+void button_irq_handler(uint gpio, uint32_t events) {
+    if (gpio == BUTTON_PIN) {
+        // Detect button press (falling edge)
+        if (events & GPIO_IRQ_EDGE_FALL) {
+            // Button pressed - start sequence
+            sequence_active = 1;
+            sequence_timer = 0;
+            // Set initial target to vertical (hanging down) = -90 degrees (or 270 in 0-360 range)
+            // Using complementary filter angle where 0 = horizontal, positive = up
+            target_angle = int2fix15(-90);
+        }
+    }
+}
+
 // Entry point for core 1
 void core1_entry() {
     pt_add_thread(protothread_vga) ;
@@ -362,6 +409,16 @@ int main() {
     // Start the channel
     pwm_set_mask_enabled((1u << slice_num));
 
+    ////////////////////////////////////////////////////////////////////////
+    ///////////////////////// BUTTON CONFIGURATION ////////////////////////////
+    ////////////////////////////////////////////////////////////////////////
+    // Initialize button GPIO
+    gpio_init(BUTTON_PIN);
+    gpio_set_dir(BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_PIN);
+    
+    // Set up button interrupt on falling edge (button press)
+    gpio_set_irq_enabled_with_callback(BUTTON_PIN, GPIO_IRQ_EDGE_FALL, true, &button_irq_handler);
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////////// ROCK AND ROLL ////////////////////////////
