@@ -92,6 +92,7 @@ volatile int button_held = 0;
 volatile int sequence_active = 0;
 volatile uint32_t sequence_start_time = 0;
 volatile uint32_t sequence_timer = 0;
+volatile int motor_disabled = 0;
 
 // Interrupt service routine
 void on_pwm_wrap() {
@@ -141,9 +142,13 @@ void on_pwm_wrap() {
     // Prevent error sum overflow
     if (error_sum > int2fix15(500)) error_sum = int2fix15(500);
     else if (error_sum < int2fix15(-500)) error_sum = int2fix15(-500);
-    control = fix2int15( - multfix15(Kp, error_angle) - multfix15(Ki, error_sum) - multfix15(Kd, gyro_angle_delta));
-    if (control > 3000) control = 3000;
-    else if (control < 0) control = 0;
+    if (motor_disabled) {
+        control = 0;
+    } else {
+        control = fix2int15( - multfix15(Kp, error_angle) - multfix15(Ki, error_sum) - multfix15(Kd, gyro_angle_delta));
+        if (control > 3000) control = 3000;
+        else if (control < 0) control = 0;
+    }
 
     // Update duty cycle
     if (control != old_control) {
@@ -338,14 +343,19 @@ static PT_THREAD (protothread_serial(struct pt *pt))
 // Button interrupt handler
 void button_irq_handler(uint gpio, uint32_t events) {
     if (gpio == BUTTON_PIN) {
-        // Detect button press (falling edge)
+        // Button pressed (falling edge) - disable motor, arm hangs down
         if (events & GPIO_IRQ_EDGE_FALL) {
-            // Button pressed - start sequence
+            motor_disabled = 1;
+            sequence_active = 0;
+            sequence_timer = 0;
+        }
+        // Button released (rising edge) - enable motor and start sequence
+        else if (events & GPIO_IRQ_EDGE_RISE) {
+            motor_disabled = 0;
             sequence_active = 1;
             sequence_timer = 0;
-            // Set initial target to vertical (hanging down) = -90 degrees (or 270 in 0-360 range)
-            // Using complementary filter angle where 0 = horizontal, positive = up
-            target_angle = int2fix15(-90);
+            // First target: horizontal (90 degrees)
+            target_angle = int2fix15(90);
         }
     }
 }
@@ -417,8 +427,8 @@ int main() {
     gpio_set_dir(BUTTON_PIN, GPIO_IN);
     gpio_pull_up(BUTTON_PIN);
     
-    // Set up button interrupt on falling edge (button press)
-    gpio_set_irq_enabled_with_callback(BUTTON_PIN, GPIO_IRQ_EDGE_FALL, true, &button_irq_handler);
+    // Set up button interrupt on both falling edge (press) and rising edge (release)
+    gpio_set_irq_enabled_with_callback(BUTTON_PIN, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true, &button_irq_handler);
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////////// ROCK AND ROLL ////////////////////////////
