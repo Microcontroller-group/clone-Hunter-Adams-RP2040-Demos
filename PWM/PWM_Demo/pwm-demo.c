@@ -24,9 +24,9 @@
 
 // PWM wrap value and clock divide value
 // For a CPU rate of 125 MHz, this gives
-// a PWM frequency of 1 kHz.
-#define WRAPVAL 5000
-#define CLKDIV 25.0f
+// a PWM frequency of 50 Hz.
+#define WRAPVAL 24999
+#define CLKDIV 100.0f
 
 // GPIO we're using for PWM
 #define PWM_OUT 4
@@ -55,14 +55,14 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     PT_BEGIN(pt) ;
     static int test_in ;
     while(1) {
-        sprintf(pt_serial_out_buffer, "input a duty cycle (0-5000): ");
+        sprintf(pt_serial_out_buffer, "input a duty cycle (625-3125): ");
         serial_write ;
         // spawn a thread to do the non-blocking serial read
         serial_read ;
         // convert input string to number
         sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-        if (test_in > 5000) continue ;
-        else if (test_in < 0) continue ;
+        if (test_in > 3125) continue ;
+        else if (test_in < 625) continue ;
         else control = test_in ;
     }
     PT_END(pt) ;
