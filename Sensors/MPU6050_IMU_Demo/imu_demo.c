@@ -130,7 +130,7 @@ int control_filtered = 0;       // Low-pass filtered duty cycle for display
 /**
  * PWM Wrap Interrupt Service Routine
  * 
- * This ISR is triggered at 1kHz by the PWM counter wrap event.
+ * This ISR is triggered at 1200 Hz by the PWM counter wrap event.
  * It performs three main tasks:
  * 1. Read and process IMU sensor data
  * 2. Calculate beam angle using complementary filter
