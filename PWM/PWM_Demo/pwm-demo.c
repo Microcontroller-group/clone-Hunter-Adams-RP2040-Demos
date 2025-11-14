@@ -37,6 +37,8 @@ uint slice_num ;
 // PWM duty cycle
 volatile int control ;
 volatile int old_control ;
+// Servo sweep speed in degrees/second
+volatile float sweep_speed = 100.0;
 
 // PWM interrupt service routine
 void on_pwm_wrap() {
@@ -49,21 +51,73 @@ void on_pwm_wrap() {
     }
 }
 
+// This function maps an angle (0-270 degrees) to a PWM duty cycle.
+int angle_to_duty_cycle(int angle) {
+    // The range of duty cycles that correspond to 0-270 degrees
+    static const int min_duty = 625;
+    static const int max_duty = 3125;
+    // The range of angles
+    static const int min_angle = 0;
+    static const int max_angle = 270;
+
+    // Linearly map the angle to the duty cycle
+    return min_duty + (int)(((float)(angle - min_angle) / (max_angle - min_angle)) * (max_duty - min_duty));
+}
+
+// This thread sweeps the servo back and forth
+static PT_THREAD (protothread_sweep(struct pt *pt))
+{
+    PT_BEGIN(pt);
+
+    // The range of angles
+    static const int min_angle = 0;
+    static const int max_angle = 270;
+    // The amount to change the angle by in each step
+    static const int angle_step = 1;
+    
+    static int angle = 0;
+    static int sweep_delay_us;
+
+    while(1) {
+        // Calculate delay based on current speed.
+        if (sweep_speed > 0) {
+            sweep_delay_us = (int)((angle_step / sweep_speed) * 1000000);
+        } else {
+            // If speed is 0 or negative, don't move
+            PT_YIELD_usec(100000); // Yield for a bit to prevent busy-waiting
+            continue;
+        }
+
+        // Sweep from 0 to 270 degrees
+        for (angle = min_angle; angle <= max_angle; angle += angle_step) {
+            control = angle_to_duty_cycle(angle);
+            PT_YIELD_usec(sweep_delay_us);
+        }
+
+        // Sweep from 270 to 0 degrees
+        for (angle = max_angle; angle >= min_angle; angle -= angle_step) {
+            control = angle_to_duty_cycle(angle);
+            PT_YIELD_usec(sweep_delay_us);
+        }
+    }
+    PT_END(pt);
+}
+
 // User input thread
 static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt) ;
-    static int test_in ;
+    static float new_speed ;
     while(1) {
-        sprintf(pt_serial_out_buffer, "input a duty cycle (625-3125): ");
+        sprintf(pt_serial_out_buffer, "Input a sweep speed (degrees/sec): ");
         serial_write ;
         // spawn a thread to do the non-blocking serial read
         serial_read ;
         // convert input string to number
-        sscanf(pt_serial_in_buffer,"%d", &test_in) ;
-        if (test_in > 3125) continue ;
-        else if (test_in < 625) continue ;
-        else control = test_in ;
+        sscanf(pt_serial_in_buffer,"%f", &new_speed) ;
+        if (new_speed >= 0) {
+            sweep_speed = new_speed;
+        }
     }
     PT_END(pt) ;
 }
@@ -102,6 +156,7 @@ int main() {
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////////// ROCK AND ROLL ////////////////////////////
     ////////////////////////////////////////////////////////////////////////
+    pt_add_thread(protothread_sweep) ;
     pt_add_thread(protothread_serial) ;
     pt_schedule_start ;
 
