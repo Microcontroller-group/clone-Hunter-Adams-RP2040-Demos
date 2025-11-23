@@ -28,26 +28,67 @@
 #define WRAPVAL 24999
 #define CLKDIV 100.0f
 
-// GPIO we're using for PWM
-#define PWM_OUT 4
+// GPIOs we're using for PWM
+#define PWM_PIN1 4
+#define PWM_PIN2 5
+#define PWM_PIN3 6
 
-// Variable to hold PWM slice number
-uint slice_num ;
+// Variables to hold PWM slice numbers
+uint slice_num1 ;
+uint slice_num3 ;
 
-// PWM duty cycle
-volatile int control ;
-volatile int old_control ;
+// PWM duty cycles
+volatile int control1 ;
+volatile int old_control1 ;
+volatile int control2 ;
+volatile int old_control2 ;
+volatile int control3 ;
+volatile int old_control3 ;
+
 // Servo sweep speed in degrees/second
 volatile float sweep_speed = 100.0;
+// Active motor selection (0=all, 1=motor1, 2=motor2, 3=motor3)
+volatile int active_motor = 0;
+
+// Control mode (0=sweep)
+volatile int control_mode = 0;
+
+// Independent angles and directions for each motor
+volatile int angle1 = 0;
+volatile int dir1 = 1;
+
+volatile int angle2 = 90;
+volatile int dir2 = 1;
+
+volatile int angle3 = 180;
+volatile int dir3 = 1;
 
 // PWM interrupt service routine
 void on_pwm_wrap() {
-    // Clear the interrupt flag that brought us here
-    pwm_clear_irq(pwm_gpio_to_slice_num(PWM_OUT));
-    // Update duty cycle
-    if (control!=old_control) {
-        old_control = control ;
-        pwm_set_chan_level(slice_num, PWM_CHAN_A, control);
+    uint32_t status = pwm_get_irq_status_mask();
+
+    // Handle Slice 2 (GPIO 4 and 5)
+    if (status & (1u << slice_num1)) {
+        pwm_clear_irq(slice_num1);
+        
+        if (control1 != old_control1) {
+            old_control1 = control1;
+            pwm_set_chan_level(slice_num1, PWM_CHAN_A, control1);
+        }
+        if (control2 != old_control2) {
+            old_control2 = control2;
+            pwm_set_chan_level(slice_num1, PWM_CHAN_B, control2);
+        }
+    }
+
+    // Handle Slice 3 (GPIO 6)
+    if (status & (1u << slice_num3)) {
+        pwm_clear_irq(slice_num3);
+        
+        if (control3 != old_control3) {
+            old_control3 = control3;
+            pwm_set_chan_level(slice_num3, PWM_CHAN_A, control3);
+        }
     }
 }
 
@@ -64,41 +105,104 @@ int angle_to_duty_cycle(int angle) {
     return min_duty + (int)(((float)(angle - min_angle) / (max_angle - min_angle)) * (max_duty - min_duty));
 }
 
-// This thread sweeps the servo back and forth
-static PT_THREAD (protothread_sweep(struct pt *pt))
+// Reset all motors to 0 degrees
+void motor_reset() {
+    control_mode = 1;
+}
+
+// Reset mode step function
+int mode_reset_step() {
+    static const int angle_step = 1;
+    int delay_us;
+
+    if (sweep_speed > 0) {
+        delay_us = (int)((angle_step / sweep_speed) * 1000000);
+    } else {
+        delay_us = 10000;
+    }
+
+    int active = 0;
+
+    // Move Motor 1 towards 0
+    if (angle1 > 0) { angle1 -= angle_step; if (angle1 < 0) angle1 = 0; active = 1; }
+    else if (angle1 < 0) { angle1 += angle_step; if (angle1 > 0) angle1 = 0; active = 1; }
+    control1 = angle_to_duty_cycle(angle1);
+
+    // Move Motor 2 towards 0
+    if (angle2 > 0) { angle2 -= angle_step; if (angle2 < 0) angle2 = 0; active = 1; }
+    else if (angle2 < 0) { angle2 += angle_step; if (angle2 > 0) angle2 = 0; active = 1; }
+    control2 = angle_to_duty_cycle(angle2);
+
+    // Move Motor 3 towards 0
+    if (angle3 > 0) { angle3 -= angle_step; if (angle3 < 0) angle3 = 0; active = 1; }
+    else if (angle3 < 0) { angle3 += angle_step; if (angle3 > 0) angle3 = 0; active = 1; }
+    control3 = angle_to_duty_cycle(angle3);
+
+    if (!active) {
+        dir1 = 1; dir2 = 1; dir3 = 1;
+    }
+
+    return delay_us;
+}
+
+// Sweep mode step function
+int mode_sweep_step() {
+    static const int min_angle = 0;
+    static const int max_angle = 270;
+    static const int angle_step = 1;
+
+    int delay_us;
+
+    if (sweep_speed > 0) {
+        delay_us = (int)((angle_step / sweep_speed) * 1000000);
+    } else {
+        return 100000;
+    }
+
+    // Update Motor 1
+    if (active_motor == 0 || active_motor == 1) {
+        angle1 += dir1 * angle_step;
+        if (angle1 >= max_angle) { angle1 = max_angle; dir1 = -1; }
+        else if (angle1 <= min_angle) { angle1 = min_angle; dir1 = 1; }
+        control1 = angle_to_duty_cycle(angle1);
+    }
+
+    // Update Motor 2
+    if (active_motor == 0 || active_motor == 2) {
+        angle2 += dir2 * angle_step;
+        if (angle2 >= max_angle) { angle2 = max_angle; dir2 = -1; }
+        else if (angle2 <= min_angle) { angle2 = min_angle; dir2 = 1; }
+        control2 = angle_to_duty_cycle(angle2);
+    }
+
+    // Update Motor 3
+    if (active_motor == 0 || active_motor == 3) {
+        angle3 += dir3 * angle_step;
+        if (angle3 >= max_angle) { angle3 = max_angle; dir3 = -1; }
+        else if (angle3 <= min_angle) { angle3 = min_angle; dir3 = 1; }
+        control3 = angle_to_duty_cycle(angle3);
+    }
+
+    return delay_us;
+}
+
+// This thread controls the motors based on the selected mode
+static PT_THREAD (protothread_motors(struct pt *pt))
 {
     PT_BEGIN(pt);
 
-    // The range of angles
-    static const int min_angle = 0;
-    static const int max_angle = 270;
-    // The amount to change the angle by in each step
-    static const int angle_step = 1;
-    
-    static int angle = 0;
-    static int sweep_delay_us;
+    static int delay_us;
 
     while(1) {
-        // Calculate delay based on current speed.
-        if (sweep_speed > 0) {
-            sweep_delay_us = (int)((angle_step / sweep_speed) * 1000000);
+        if (control_mode == 0) {
+            delay_us = mode_sweep_step();
+        } else if (control_mode == 1) {
+            delay_us = mode_reset_step();
         } else {
-            // If speed is 0 or negative, don't move
-            PT_YIELD_usec(100000); // Yield for a bit to prevent busy-waiting
-            continue;
+            // Default safe state or other modes
+            delay_us = 100000;
         }
-
-        // Sweep from 0 to 270 degrees
-        for (angle = min_angle; angle <= max_angle; angle += angle_step) {
-            control = angle_to_duty_cycle(angle);
-            PT_YIELD_usec(sweep_delay_us);
-        }
-
-        // Sweep from 270 to 0 degrees
-        for (angle = max_angle; angle >= min_angle; angle -= angle_step) {
-            control = angle_to_duty_cycle(angle);
-            PT_YIELD_usec(sweep_delay_us);
-        }
+        PT_YIELD_usec(delay_us);
     }
     PT_END(pt);
 }
@@ -107,16 +211,24 @@ static PT_THREAD (protothread_sweep(struct pt *pt))
 static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt) ;
-    static float new_speed ;
+    static char cmd;
+    static float value;
     while(1) {
-        sprintf(pt_serial_out_buffer, "Input a sweep speed (degrees/sec): ");
+        sprintf(pt_serial_out_buffer, "Enter 's <speed>', 'm <0-3>', or 'c <mode>': ");
         serial_write ;
         // spawn a thread to do the non-blocking serial read
         serial_read ;
         // convert input string to number
-        sscanf(pt_serial_in_buffer,"%f", &new_speed) ;
-        if (new_speed >= 0) {
-            sweep_speed = new_speed;
+        sscanf(pt_serial_in_buffer, "%c %f", &cmd, &value);
+        if (cmd == 's') {
+             if (value >= 0) sweep_speed = value;
+        } else if (cmd == 'm') {
+             int motor = (int)value;
+             if (motor >= 0 && motor <= 3) active_motor = motor;
+        } else if (cmd == 'c') {
+             control_mode = (int)value;
+        } else if (cmd == 'r') {
+             motor_reset();
         }
     }
     PT_END(pt) ;
@@ -130,33 +242,43 @@ int main() {
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// PWM CONFIGURATION ////////////////////////////
     ////////////////////////////////////////////////////////////////////////
-    // Tell GPIO PWM_OUT that it is allocated to the PWM
-    gpio_set_function(PWM_OUT, GPIO_FUNC_PWM);
+    // Tell GPIOs that they are allocated to the PWM
+    gpio_set_function(PWM_PIN1, GPIO_FUNC_PWM);
+    gpio_set_function(PWM_PIN2, GPIO_FUNC_PWM);
+    gpio_set_function(PWM_PIN3, GPIO_FUNC_PWM);
 
     // Find out which PWM slice is connected to GPIO PWM_OUT (it's slice 2)
-    slice_num = pwm_gpio_to_slice_num(PWM_OUT);
+    slice_num1 = pwm_gpio_to_slice_num(PWM_PIN1);
+    slice_num3 = pwm_gpio_to_slice_num(PWM_PIN3);
 
     // Mask our slice's IRQ output into the PWM block's single interrupt line,
     // and register our interrupt handler
-    pwm_clear_irq(slice_num);
-    pwm_set_irq_enabled(slice_num, true);
+    pwm_clear_irq(slice_num1);
+    pwm_clear_irq(slice_num3);
+    pwm_set_irq_enabled(slice_num1, true);
+    pwm_set_irq_enabled(slice_num3, true);
+    
     irq_set_exclusive_handler(PWM_IRQ_WRAP, on_pwm_wrap);
     irq_set_enabled(PWM_IRQ_WRAP, true);
 
     // This section configures the period of the PWM signals
-    pwm_set_wrap(slice_num, WRAPVAL) ;
-    pwm_set_clkdiv(slice_num, CLKDIV) ;
+    pwm_set_wrap(slice_num1, WRAPVAL) ;
+    pwm_set_clkdiv(slice_num1, CLKDIV) ;
+    pwm_set_wrap(slice_num3, WRAPVAL) ;
+    pwm_set_clkdiv(slice_num3, CLKDIV) ;
 
     // This sets duty cycle
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, 3125);
+    pwm_set_chan_level(slice_num1, PWM_CHAN_A, 3125);
+    pwm_set_chan_level(slice_num1, PWM_CHAN_B, 3125);
+    pwm_set_chan_level(slice_num3, PWM_CHAN_A, 3125);
 
     // Start the channel
-    pwm_set_mask_enabled((1u << slice_num));
+    pwm_set_mask_enabled((1u << slice_num1) | (1u << slice_num3));
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////////// ROCK AND ROLL ////////////////////////////
     ////////////////////////////////////////////////////////////////////////
-    pt_add_thread(protothread_sweep) ;
+    pt_add_thread(protothread_motors) ;
     pt_add_thread(protothread_serial) ;
     pt_schedule_start ;
 
