@@ -51,7 +51,11 @@ volatile float sweep_speed = 100.0;
 volatile int active_motor = 0;
 
 // Control mode (0=sweep)
-volatile int control_mode = 0;
+#define MODE_SWEEP 0
+#define MODE_RESET 1
+#define MODE_MOVE_1_2 2
+#define MODE_WALK 3
+volatile int control_mode = MODE_SWEEP;
 
 // Independent angles and directions for each motor
 volatile int angle1 = 0;
@@ -105,9 +109,32 @@ int angle_to_duty_cycle(int angle) {
     return min_duty + (int)(((float)(angle - min_angle) / (max_angle - min_angle)) * (max_duty - min_duty));
 }
 
-// Reset all motors to 0 degrees
-void motor_reset() {
-    control_mode = 1;
+// Target reset angle
+volatile int reset_target_angle = 0;
+
+// Reset all motors to target angle
+void motor_reset(int target) {
+    if (target >= 0 && target <= 270) {
+        reset_target_angle = target;
+        control_mode = 1;
+    }
+}
+
+// Move motor 1 and 2 to target angle
+void motor_move_1_2(int target) {
+    if (target >= 0 && target <= 270) {
+        reset_target_angle = target;
+        control_mode = 2;
+    }
+}
+
+// Walk mode state
+volatile int walk_state = 0;
+
+// Start walk mode
+void motor_walk() {
+    walk_state = 0;
+    control_mode = 3;
 }
 
 // Reset mode step function
@@ -123,23 +150,53 @@ int mode_reset_step() {
 
     int active = 0;
 
-    // Move Motor 1 towards 0
-    if (angle1 > 0) { angle1 -= angle_step; if (angle1 < 0) angle1 = 0; active = 1; }
-    else if (angle1 < 0) { angle1 += angle_step; if (angle1 > 0) angle1 = 0; active = 1; }
+    // Move Motor 1 towards target
+    if (angle1 > reset_target_angle) { angle1 -= angle_step; if (angle1 < reset_target_angle) angle1 = reset_target_angle; active = 1; }
+    else if (angle1 < reset_target_angle) { angle1 += angle_step; if (angle1 > reset_target_angle) angle1 = reset_target_angle; active = 1; }
     control1 = angle_to_duty_cycle(angle1);
 
-    // Move Motor 2 towards 0
-    if (angle2 > 0) { angle2 -= angle_step; if (angle2 < 0) angle2 = 0; active = 1; }
-    else if (angle2 < 0) { angle2 += angle_step; if (angle2 > 0) angle2 = 0; active = 1; }
+    // Move Motor 2 towards target
+    if (angle2 > reset_target_angle) { angle2 -= angle_step; if (angle2 < reset_target_angle) angle2 = reset_target_angle; active = 1; }
+    else if (angle2 < reset_target_angle) { angle2 += angle_step; if (angle2 > reset_target_angle) angle2 = reset_target_angle; active = 1; }
     control2 = angle_to_duty_cycle(angle2);
 
-    // Move Motor 3 towards 0
-    if (angle3 > 0) { angle3 -= angle_step; if (angle3 < 0) angle3 = 0; active = 1; }
-    else if (angle3 < 0) { angle3 += angle_step; if (angle3 > 0) angle3 = 0; active = 1; }
+    // Move Motor 3 towards target
+    if (angle3 > reset_target_angle) { angle3 -= angle_step; if (angle3 < reset_target_angle) angle3 = reset_target_angle; active = 1; }
+    else if (angle3 < reset_target_angle) { angle3 += angle_step; if (angle3 > reset_target_angle) angle3 = reset_target_angle; active = 1; }
     control3 = angle_to_duty_cycle(angle3);
 
     if (!active) {
         dir1 = 1; dir2 = 1; dir3 = 1;
+    }
+
+    return delay_us;
+}
+
+// Move 1 & 2 mode step function
+int mode_move_1_2_step() {
+    static const int angle_step = 1;
+    int delay_us;
+
+    if (sweep_speed > 0) {
+        delay_us = (int)((angle_step / sweep_speed) * 1000000);
+    } else {
+        delay_us = 10000;
+    }
+
+    int active = 0;
+
+    // Move Motor 1 towards target
+    if (angle1 > reset_target_angle) { angle1 -= angle_step; if (angle1 < reset_target_angle) angle1 = reset_target_angle; active = 1; }
+    else if (angle1 < reset_target_angle) { angle1 += angle_step; if (angle1 > reset_target_angle) angle1 = reset_target_angle; active = 1; }
+    control1 = angle_to_duty_cycle(angle1);
+
+    // Move Motor 2 towards target
+    if (angle2 > reset_target_angle) { angle2 -= angle_step; if (angle2 < reset_target_angle) angle2 = reset_target_angle; active = 1; }
+    else if (angle2 < reset_target_angle) { angle2 += angle_step; if (angle2 > reset_target_angle) angle2 = reset_target_angle; active = 1; }
+    control2 = angle_to_duty_cycle(angle2);
+
+    if (!active) {
+        dir1 = 1; dir2 = 1;
     }
 
     return delay_us;
@@ -186,6 +243,92 @@ int mode_sweep_step() {
     return delay_us;
 }
 
+// Walk mode step function
+int mode_walk_step() {
+    static const int angle_step = 1;
+    int delay_us;
+
+    if (sweep_speed > 0) {
+        delay_us = (int)((angle_step / sweep_speed) * 1000000);
+    } else {
+        delay_us = 10000;
+    }
+
+    int active = 0;
+    int target = 0;
+
+    switch (walk_state) {
+        case 0: // Init: Move all to 90
+            target = 90;
+            if (angle1 < target) { angle1 += angle_step; if (angle1 > target) angle1 = target; active = 1; }
+            else if (angle1 > target) { angle1 -= angle_step; if (angle1 < target) angle1 = target; active = 1; }
+            
+            if (angle2 < target) { angle2 += angle_step; if (angle2 > target) angle2 = target; active = 1; }
+            else if (angle2 > target) { angle2 -= angle_step; if (angle2 < target) angle2 = target; active = 1; }
+            
+            if (angle3 < target) { angle3 += angle_step; if (angle3 > target) angle3 = target; active = 1; }
+            else if (angle3 > target) { angle3 -= angle_step; if (angle3 < target) angle3 = target; active = 1; }
+            
+            if (!active) walk_state = 1;
+            break;
+
+        case 1: // Wait 1s
+            walk_state = 2;
+            return 1000000;
+
+        case 2: // Move 1 & 2 to 105
+            target = 120;
+            if (angle1 < target) { angle1 += angle_step; if (angle1 > target) angle1 = target; active = 1; }
+            else if (angle1 > target) { angle1 -= angle_step; if (angle1 < target) angle1 = target; active = 1; }
+            
+            if (angle2 < target) { angle2 += angle_step; if (angle2 > target) angle2 = target; active = 1; }
+            else if (angle2 > target) { angle2 -= angle_step; if (angle2 < target) angle2 = target; active = 1; }
+            
+            if (!active) walk_state = 3;
+            break;
+
+        case 3: // Wait 0.5s
+            walk_state = 4;
+            return 500000;
+
+        case 4: // Move 1 & 2 to 75
+            target = 60;
+            if (angle1 < target) { angle1 += angle_step; if (angle1 > target) angle1 = target; active = 1; }
+            else if (angle1 > target) { angle1 -= angle_step; if (angle1 < target) angle1 = target; active = 1; }
+            
+            if (angle2 < target) { angle2 += angle_step; if (angle2 > target) angle2 = target; active = 1; }
+            else if (angle2 > target) { angle2 -= angle_step; if (angle2 < target) angle2 = target; active = 1; }
+            
+            if (!active) walk_state = 5;
+            break;
+
+        case 5: // Wait 0.5s
+            walk_state = 6;
+            return 500000;
+
+        case 6: // Move 1 & 2 to 90
+            target = 90;
+            if (angle1 < target) { angle1 += angle_step; if (angle1 > target) angle1 = target; active = 1; }
+            else if (angle1 > target) { angle1 -= angle_step; if (angle1 < target) angle1 = target; active = 1; }
+            
+            if (angle2 < target) { angle2 += angle_step; if (angle2 > target) angle2 = target; active = 1; }
+            else if (angle2 > target) { angle2 -= angle_step; if (angle2 < target) angle2 = target; active = 1; }
+            
+            if (!active) walk_state = 7;
+            break;
+
+        case 7: // Wait 0.5s
+            walk_state = 2; // Repeat from step [1] (which is state 2 here)
+            return 500000;
+    }
+
+    control1 = angle_to_duty_cycle(angle1);
+    control2 = angle_to_duty_cycle(angle2);
+    control3 = angle_to_duty_cycle(angle3);
+
+    return delay_us;
+}
+
 // This thread controls the motors based on the selected mode
 static PT_THREAD (protothread_motors(struct pt *pt))
 {
@@ -194,10 +337,16 @@ static PT_THREAD (protothread_motors(struct pt *pt))
     static int delay_us;
 
     while(1) {
-        if (control_mode == 0) {
+        if (control_mode == MODE_SWEEP) {
             delay_us = mode_sweep_step();
-        } else if (control_mode == 1) {
+        } else if (control_mode == MODE_RESET) {
             delay_us = mode_reset_step();
+        } else if (control_mode == MODE_MOVE_1_2) {
+            delay_us = mode_move_1_2_step();
+        } else if (control_mode == MODE_MOVE_1_2) {
+            delay_us = mode_move_1_2_step();
+        } else if (control_mode == MODE_WALK) {
+            delay_us = mode_walk_step();
         } else {
             // Default safe state or other modes
             delay_us = 100000;
@@ -228,7 +377,11 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         } else if (cmd == 'c') {
              control_mode = (int)value;
         } else if (cmd == 'r') {
-             motor_reset();
+             motor_reset((int)value);
+        } else if (cmd == 't') {
+             motor_move_1_2((int)value);
+        } else if (cmd == 'w') {
+             motor_walk();
         }
     }
     PT_END(pt) ;
