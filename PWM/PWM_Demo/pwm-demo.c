@@ -48,14 +48,34 @@ volatile int old_control3 ;
 // Servo speed in degrees/second
 volatile float motor_speed = 60.0;
 
-// Target angle for all motors
-volatile int target_angle = 90;
+// Target angles for each motor
+volatile int target_angle1 = 90;
+volatile int target_angle2 = 90;
+volatile int target_angle3 = 90;
+
+// Offsets for each motor
+volatile int offset_motor1 = 5;
+volatile int offset_motor2 = -5;
+volatile int offset_motor3 = 0;
+
+// Moving range limits
+volatile int min_angle1 = 10;
+volatile int max_angle1 = 170;
+volatile int min_angle2 = 10;
+volatile int max_angle2 = 170;
+volatile int min_angle3 = 60;
+volatile int max_angle3 = 120;
+
+// Helper macro for clamping
+#define CLAMP(x, low, high)  (((x) > (high)) ? (high) : (((x) < (low)) ? (low) : (x)))
 
 // Stop flag
 volatile bool stop_motors = false;
 
-// Test mode flag
-volatile bool test_mode = false;
+// Test mode flags
+volatile bool test_mode1 = false;
+volatile bool test_mode2 = false;
+volatile bool test_mode3 = false;
 
 // Current angles for each motor
 volatile int angle1 = 90;
@@ -120,25 +140,35 @@ static PT_THREAD (protothread_motors(struct pt *pt))
         }
 
         if (!stop_motors) {
-            // Test mode logic: sweep back and forth
-            if (test_mode) {
-                if (angle1 >= 270) target_angle = 0;
-                else if (angle1 <= 0) target_angle = 270;
+            // Test mode logic for Motor 1
+            if (test_mode1) {
+                if (angle1 >= max_angle1 + offset_motor1) target_angle1 = min_angle1 + offset_motor1;
+                else if (angle1 <= min_angle1 + offset_motor1) target_angle1 = max_angle1 + offset_motor1;
+            }
+            // Test mode logic for Motor 2
+            if (test_mode2) {
+                if (angle2 >= max_angle2 + offset_motor2) target_angle2 = min_angle2 + offset_motor2;
+                else if (angle2 <= min_angle2 + offset_motor2) target_angle2 = max_angle2 + offset_motor2;
+            }
+            // Test mode logic for Motor 3
+            if (test_mode3) {
+                if (angle3 >= max_angle3 + offset_motor3) target_angle3 = min_angle3 + offset_motor3;
+                else if (angle3 <= min_angle3 + offset_motor3) target_angle3 = max_angle3 + offset_motor3;
             }
 
             // Update Motor 1
-            if (angle1 < target_angle) angle1 += angle_step;
-            else if (angle1 > target_angle) angle1 -= angle_step;
+            if (angle1 < target_angle1) angle1 += angle_step;
+            else if (angle1 > target_angle1) angle1 -= angle_step;
             control1 = angle_to_duty_cycle(angle1);
 
             // Update Motor 2
-            if (angle2 < target_angle) angle2 += angle_step;
-            else if (angle2 > target_angle) angle2 -= angle_step;
+            if (angle2 < target_angle2) angle2 += angle_step;
+            else if (angle2 > target_angle2) angle2 -= angle_step;
             control2 = angle_to_duty_cycle(angle2);
 
             // Update Motor 3
-            if (angle3 < target_angle) angle3 += angle_step;
-            else if (angle3 > target_angle) angle3 -= angle_step;
+            if (angle3 < target_angle3) angle3 += angle_step;
+            else if (angle3 > target_angle3) angle3 -= angle_step;
             control3 = angle_to_duty_cycle(angle3);
         }
 
@@ -154,7 +184,7 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     static char cmd[10];
     static float value;
     while(1) {
-        sprintf(pt_serial_out_buffer, "Enter 'x', 'speed <val>', 'set <val>', or 'test': ");
+        sprintf(pt_serial_out_buffer, "Enter cmd (x, speed, set, set1/2/3, set12, test1/2/3, offset1/2/3, print): ");
         serial_write ;
         // spawn a thread to do the non-blocking serial read
         serial_read ;
@@ -163,30 +193,98 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         
         if (strcmp(cmd, "x") == 0) {
              stop_motors = true;
-             test_mode = false;
+             test_mode1 = false;
+             test_mode2 = false;
+             test_mode3 = false;
         } else if (strcmp(cmd, "speed") == 0) {
              if (value > 0) motor_speed = value;
         } else if (strcmp(cmd, "set") == 0) {
-             if (value >= 0 && value <= 270) {
-                 target_angle = (int)value;
+             if (value >= 0 && value <= 180) {
+                 target_angle1 = CLAMP((int)value, min_angle1, max_angle1) + offset_motor1;
+                 target_angle2 = 180 - CLAMP((int)value, min_angle2, max_angle2) + offset_motor2;
+                 target_angle3 = CLAMP((int)value, min_angle3, max_angle3) + offset_motor3;
                  stop_motors = false;
-                 test_mode = false;
+                 test_mode1 = false;
+                 test_mode2 = false;
+                 test_mode3 = false;
              }
-        } else if (strcmp(cmd, "test") == 0) {
-             test_mode = true;
+        } else if (strcmp(cmd, "set1") == 0) {
+             if (value >= 0 && value <= 180) {
+                 target_angle1 = CLAMP((int)value, min_angle1, max_angle1) + offset_motor1;
+                 stop_motors = false;
+                 test_mode1 = false;
+             }
+        } else if (strcmp(cmd, "set2") == 0) {
+             if (value >= 0 && value <= 180) {
+                 target_angle2 = 180 - CLAMP((int)value, min_angle2, max_angle2) + offset_motor2;
+                 stop_motors = false;
+                 test_mode2 = false;
+             }
+        } else if (strcmp(cmd, "set3") == 0) {
+             if (value >= 0 && value <= 180) {
+                 target_angle3 = CLAMP((int)value, min_angle3, max_angle3) + offset_motor3;
+                 stop_motors = false;
+                 test_mode3 = false;
+             }
+        } else if (strcmp(cmd, "set12") == 0) {
+             if (value >= 0 && value <= 180) {
+                 target_angle1 = CLAMP((int)value, min_angle1, max_angle1) + offset_motor1;
+                 target_angle2 = 180 - CLAMP((int)value, min_angle2, max_angle2) + offset_motor2;
+                 stop_motors = false;
+                 test_mode1 = false;
+                 test_mode2 = false;
+             }
+        } else if (strcmp(cmd, "test1") == 0) {
+             test_mode1 = true;
              stop_motors = false;
              // Kickstart movement
-             if (angle1 >= 270) target_angle = 0;
-             else target_angle = 270;
+             if (angle1 >= max_angle1 + offset_motor1) target_angle1 = min_angle1 + offset_motor1;
+             else target_angle1 = max_angle1 + offset_motor1;
+        } else if (strcmp(cmd, "test2") == 0) {
+             test_mode2 = true;
+             stop_motors = false;
+             // Kickstart movement
+             if (angle2 >= max_angle2 + offset_motor2) target_angle2 = min_angle2 + offset_motor2;
+             else target_angle2 = max_angle2 + offset_motor2;
+        } else if (strcmp(cmd, "test3") == 0) {
+             test_mode3 = true;
+             stop_motors = false;
+             // Kickstart movement
+             if (angle3 >= max_angle3 + offset_motor3) target_angle3 = min_angle3 + offset_motor3;
+             else target_angle3 = max_angle3 + offset_motor3;
+        } else if (strcmp(cmd, "offset1") == 0) {
+             offset_motor1 = (int)value;
+        } else if (strcmp(cmd, "offset2") == 0) {
+             offset_motor2 = (int)value;
+        } else if (strcmp(cmd, "offset3") == 0) {
+             offset_motor3 = (int)value;
+        } else if (strcmp(cmd, "print") == 0) {
+             sprintf(pt_serial_out_buffer, "Offsets: M1=%d, M2=%d, M3=%d\n", offset_motor1, offset_motor2, offset_motor3);
+             serial_write;
         }
     }
     PT_END(pt) ;
+}
+
+// LED blink thread
+static PT_THREAD (protothread_blink(struct pt *pt))
+{
+    PT_BEGIN(pt);
+    while(1) {
+        gpio_put(PICO_DEFAULT_LED_PIN, !gpio_get(PICO_DEFAULT_LED_PIN));
+        PT_YIELD_usec(500000);
+    }
+    PT_END(pt);
 }
 
 int main() {
 
     // Initialize stdio
     stdio_init_all();
+
+    // Initialize LED
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// PWM CONFIGURATION ////////////////////////////
@@ -229,6 +327,7 @@ int main() {
     ////////////////////////////////////////////////////////////////////////
     pt_add_thread(protothread_motors) ;
     pt_add_thread(protothread_serial) ;
+    pt_add_thread(protothread_blink) ;
     pt_schedule_start ;
 
 }
