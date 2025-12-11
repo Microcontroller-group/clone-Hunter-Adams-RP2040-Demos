@@ -29,9 +29,10 @@
 #define CLKDIV 100.0f
 
 // GPIOs we're using for PWM
-#define PWM_PIN1 4
-#define PWM_PIN2 5
-#define PWM_PIN3 6
+#define PWM_PIN1 4  // Physical pin 6
+#define PWM_PIN2 5  // Physical pin 7
+#define PWM_PIN3 6  // Physical pin 9
+#define BUTTON_PIN 20 // External button pin
 
 // Variables to hold PWM slice numbers
 uint slice_num1 ;
@@ -76,6 +77,10 @@ volatile bool stop_motors = false;
 volatile bool test_mode1 = false;
 volatile bool test_mode2 = false;
 volatile bool test_mode3 = false;
+
+// Walk mode flag
+volatile bool walk_mode = false;
+volatile bool walkrepeat_mode = false;
 
 // Current angles for each motor
 volatile int angle1 = 90;
@@ -181,10 +186,10 @@ static PT_THREAD (protothread_motors(struct pt *pt))
 static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt) ;
-    static char cmd[10];
+    static char cmd[32];
     static float value;
     while(1) {
-        sprintf(pt_serial_out_buffer, "Enter cmd (x, speed, set, set1/2/3, set12, test1/2/3, offset1/2/3, print): ");
+        sprintf(pt_serial_out_buffer, "Enter cmd (x, speed, set, set1/2/3, set12, set12invert, test1/2/3, offset1/2/3, print, walk, walkrepeat): ");
         serial_write ;
         // spawn a thread to do the non-blocking serial read
         serial_read ;
@@ -196,6 +201,8 @@ static PT_THREAD (protothread_serial(struct pt *pt))
              test_mode1 = false;
              test_mode2 = false;
              test_mode3 = false;
+             walk_mode = false;
+             walkrepeat_mode = false;
         } else if (strcmp(cmd, "speed") == 0) {
              if (value > 0) motor_speed = value;
         } else if (strcmp(cmd, "set") == 0) {
@@ -207,24 +214,32 @@ static PT_THREAD (protothread_serial(struct pt *pt))
                  test_mode1 = false;
                  test_mode2 = false;
                  test_mode3 = false;
+                 walk_mode = false;
+                 walkrepeat_mode = false;
              }
         } else if (strcmp(cmd, "set1") == 0) {
              if (value >= 0 && value <= 180) {
                  target_angle1 = CLAMP((int)value, min_angle1, max_angle1) + offset_motor1;
                  stop_motors = false;
                  test_mode1 = false;
+                 walk_mode = false;
+                 walkrepeat_mode = false;
              }
         } else if (strcmp(cmd, "set2") == 0) {
              if (value >= 0 && value <= 180) {
                  target_angle2 = 180 - CLAMP((int)value, min_angle2, max_angle2) + offset_motor2;
                  stop_motors = false;
                  test_mode2 = false;
+                 walk_mode = false;
+                 walkrepeat_mode = false;
              }
         } else if (strcmp(cmd, "set3") == 0) {
              if (value >= 0 && value <= 180) {
                  target_angle3 = CLAMP((int)value, min_angle3, max_angle3) + offset_motor3;
                  stop_motors = false;
                  test_mode3 = false;
+                 walk_mode = false;
+                 walkrepeat_mode = false;
              }
         } else if (strcmp(cmd, "set12") == 0) {
              if (value >= 0 && value <= 180) {
@@ -233,25 +248,57 @@ static PT_THREAD (protothread_serial(struct pt *pt))
                  stop_motors = false;
                  test_mode1 = false;
                  test_mode2 = false;
+                 walk_mode = false;
+                 walkrepeat_mode = false;
+             }
+        } else if (strcmp(cmd, "set12invert") == 0) {
+             if (value >= 0 && value <= 180) {
+                 target_angle1 = CLAMP((int)value, min_angle1, max_angle1) + offset_motor1;
+                 target_angle2 = CLAMP((int)value, min_angle2, max_angle2) + offset_motor2;
+                 stop_motors = false;
+                 test_mode1 = false;
+                 test_mode2 = false;
+                 walk_mode = false;
+                 walkrepeat_mode = false;
              }
         } else if (strcmp(cmd, "test1") == 0) {
              test_mode1 = true;
              stop_motors = false;
+             walk_mode = false;
+             walkrepeat_mode = false;
              // Kickstart movement
              if (angle1 >= max_angle1 + offset_motor1) target_angle1 = min_angle1 + offset_motor1;
              else target_angle1 = max_angle1 + offset_motor1;
         } else if (strcmp(cmd, "test2") == 0) {
              test_mode2 = true;
              stop_motors = false;
+             walk_mode = false;
+             walkrepeat_mode = false;
              // Kickstart movement
              if (angle2 >= max_angle2 + offset_motor2) target_angle2 = min_angle2 + offset_motor2;
              else target_angle2 = max_angle2 + offset_motor2;
         } else if (strcmp(cmd, "test3") == 0) {
              test_mode3 = true;
              stop_motors = false;
+             walk_mode = false;
+             walkrepeat_mode = false;
              // Kickstart movement
              if (angle3 >= max_angle3 + offset_motor3) target_angle3 = min_angle3 + offset_motor3;
              else target_angle3 = max_angle3 + offset_motor3;
+        } else if (strcmp(cmd, "walk") == 0) {
+             walk_mode = true;
+             stop_motors = false;
+             test_mode1 = false;
+             test_mode2 = false;
+             test_mode3 = false;
+             walkrepeat_mode = false;
+        } else if (strcmp(cmd, "walkrepeat") == 0) {
+             walkrepeat_mode = true;
+             stop_motors = false;
+             test_mode1 = false;
+             test_mode2 = false;
+             test_mode3 = false;
+             walk_mode = false;
         } else if (strcmp(cmd, "offset1") == 0) {
              offset_motor1 = (int)value;
         } else if (strcmp(cmd, "offset2") == 0) {
@@ -264,6 +311,149 @@ static PT_THREAD (protothread_serial(struct pt *pt))
         }
     }
     PT_END(pt) ;
+}
+
+// Walk mode thread
+static PT_THREAD (protothread_walk(struct pt *pt)) {
+    PT_BEGIN(pt);
+    while(1) {
+        PT_WAIT_UNTIL(pt, walk_mode);
+        
+        // Step 1: set3 60
+        motor_speed = 60.0;
+        target_angle3 = CLAMP(60, min_angle3, max_angle3) + offset_motor3;
+        PT_WAIT_UNTIL(pt, angle3 == target_angle3);
+        PT_YIELD_usec(200000);
+
+        // Step 2: set12 55
+        motor_speed = 200.0;
+        target_angle1 = CLAMP(55, min_angle1, max_angle1) + offset_motor1;
+        target_angle2 = 180 - CLAMP(55, min_angle2, max_angle2) + offset_motor2;
+        PT_WAIT_UNTIL(pt, angle1 == target_angle1 && angle2 == target_angle2);
+        PT_YIELD_usec(1200000);
+
+        // Step 3: set3 120
+        motor_speed = 60.0;
+        target_angle3 = CLAMP(120, min_angle3, max_angle3) + offset_motor3;
+        // PT_WAIT_UNTIL(pt, angle3 == target_angle3);
+        PT_YIELD_usec(500000);
+
+        // Step 4: set12 90
+        target_angle1 = CLAMP(90, min_angle1, max_angle1) + offset_motor1;
+        target_angle2 = 180 - CLAMP(90, min_angle2, max_angle2) + offset_motor2;
+        PT_WAIT_UNTIL(pt, angle1 == target_angle1 && angle2 == target_angle2);
+        // PT_YIELD_usec(200000);
+
+        // Step 5: set3 90
+        motor_speed = 60.0;
+        target_angle3 = CLAMP(90, min_angle3, max_angle3) + offset_motor3;
+        PT_WAIT_UNTIL(pt, angle3 == target_angle3);
+        // PT_YIELD_usec(200000);
+
+        motor_speed = 60.0;
+        walk_mode = false;
+    }
+    PT_END(pt);
+}
+
+// Calibration thread
+static PT_THREAD (protothread_calibrate(struct pt *pt)) {
+    PT_BEGIN(pt);
+    
+    // Small delay to let everything init
+    PT_YIELD_usec(1000000);
+
+    // Step 1: set3 60
+    target_angle3 = CLAMP(60, min_angle3, max_angle3) + offset_motor3;
+    PT_WAIT_UNTIL(pt, angle3 == target_angle3);
+    PT_YIELD_usec(200000);
+
+    // Step 2: set3 120
+    target_angle3 = CLAMP(120, min_angle3, max_angle3) + offset_motor3;
+    PT_WAIT_UNTIL(pt, angle3 == target_angle3);
+    PT_YIELD_usec(200000);
+
+    // Step 3: set1 170
+    target_angle1 = CLAMP(170, min_angle1, max_angle1) + offset_motor1;
+    PT_WAIT_UNTIL(pt, angle1 == target_angle1);
+    PT_YIELD_usec(200000);
+
+    // Step 4: set1 10
+    target_angle1 = CLAMP(10, min_angle1, max_angle1) + offset_motor1;
+    PT_WAIT_UNTIL(pt, angle1 == target_angle1);
+    PT_YIELD_usec(200000);
+
+    // Step 5: set1 90
+    target_angle1 = CLAMP(90, min_angle1, max_angle1) + offset_motor1;
+    PT_WAIT_UNTIL(pt, angle1 == target_angle1);
+    PT_YIELD_usec(200000);
+
+    // Step 6: set2 170
+    target_angle2 = 180 - CLAMP(170, min_angle2, max_angle2) + offset_motor2;
+    PT_WAIT_UNTIL(pt, angle2 == target_angle2);
+    PT_YIELD_usec(200000);
+
+    // Step 7: set2 10
+    target_angle2 = 180 - CLAMP(10, min_angle2, max_angle2) + offset_motor2;
+    PT_WAIT_UNTIL(pt, angle2 == target_angle2);
+    PT_YIELD_usec(200000);
+
+    // Step 8: set2 90
+    target_angle2 = 180 - CLAMP(90, min_angle2, max_angle2) + offset_motor2;
+    PT_WAIT_UNTIL(pt, angle2 == target_angle2);
+    PT_YIELD_usec(200000);
+
+    // Step 9: set 90
+    target_angle1 = CLAMP(90, min_angle1, max_angle1) + offset_motor1;
+    target_angle2 = 180 - CLAMP(90, min_angle2, max_angle2) + offset_motor2;
+    target_angle3 = CLAMP(90, min_angle3, max_angle3) + offset_motor3;
+    PT_WAIT_UNTIL(pt, angle1 == target_angle1 && angle2 == target_angle2 && angle3 == target_angle3);
+    
+    // Done, spin forever
+    while(1) {
+        PT_YIELD(pt);
+    }
+
+    PT_END(pt);
+}
+
+// Walkrepeat mode thread
+static PT_THREAD (protothread_walkrepeat(struct pt *pt)) {
+    PT_BEGIN(pt);
+    while(1) {
+        PT_WAIT_UNTIL(pt, walkrepeat_mode);
+        
+        walk_mode = true;
+        // Wait for walk_mode to be cleared by the walk thread
+        PT_WAIT_UNTIL(pt, !walk_mode);
+    }
+    PT_END(pt);
+}
+
+// Switch thread
+static PT_THREAD (protothread_switch(struct pt *pt)) {
+    PT_BEGIN(pt);
+    static bool switch_state;
+    while(1) {
+        // Read switch state (Active High)
+        switch_state = gpio_get(BUTTON_PIN);
+
+        if (switch_state && !walkrepeat_mode) {
+            // Switch is ON, but mode is OFF -> Turn ON
+            walkrepeat_mode = true;
+            stop_motors = false;
+            test_mode1 = false;
+            test_mode2 = false;
+            test_mode3 = false;
+            walk_mode = false; 
+        } else if (!switch_state && walkrepeat_mode) {
+            // Switch is OFF, but mode is ON -> Turn OFF
+            walkrepeat_mode = false;
+        }
+
+        PT_YIELD_usec(100000);
+    }
+    PT_END(pt);
 }
 
 // LED blink thread
@@ -285,6 +475,11 @@ int main() {
     // Initialize LED
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+
+    // Initialize Button
+    gpio_init(BUTTON_PIN);
+    gpio_set_dir(BUTTON_PIN, GPIO_IN);
+    gpio_pull_down(BUTTON_PIN);
 
     ////////////////////////////////////////////////////////////////////////
     ///////////////////////// PWM CONFIGURATION ////////////////////////////
@@ -328,6 +523,10 @@ int main() {
     pt_add_thread(protothread_motors) ;
     pt_add_thread(protothread_serial) ;
     pt_add_thread(protothread_blink) ;
+    pt_add_thread(protothread_calibrate) ;
+    pt_add_thread(protothread_walk) ;
+    pt_add_thread(protothread_walkrepeat) ;
+    pt_add_thread(protothread_switch) ;
     pt_schedule_start ;
 
 }
