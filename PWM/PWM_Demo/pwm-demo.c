@@ -1,6 +1,12 @@
 /**
  * V. Hunter Adams (vha3@cornell.edu)
+ * Modified for TARS Robot Application
+ * 
  * PWM demo code with serial input
+ * 
+ * This demonstration sets a PWM duty cycle to a
+ * user-specified value. It has been adapted to control
+ * a 3-servo walking robot (Project TARS).
  * 
  * This demonstration sets a PWM duty cycle to a
  * user-specified value.
@@ -25,14 +31,17 @@
 // PWM wrap value and clock divide value
 // For a CPU rate of 125 MHz, this gives
 // a PWM frequency of 50 Hz.
+// Formula: Frequency = 125MHz / (CLKDIV * (WRAPVAL + 1))
+//          50 Hz     = 125e6  / (100.0 * 25000)
 #define WRAPVAL 24999
 #define CLKDIV 100.0f
 
 // GPIOs we're using for PWM
-#define PWM_PIN1 4  // Physical pin 6
-#define PWM_PIN2 5  // Physical pin 7
-#define PWM_PIN3 6  // Physical pin 9
-#define BUTTON_PIN 20 // External button pin
+// Mapped to specific physical pins for the TARS robot
+#define PWM_PIN1 4  // Physical pin 6 - Left Leg
+#define PWM_PIN2 5  // Physical pin 7 - Right Leg
+#define PWM_PIN3 6  // Physical pin 9 - Middle Leg
+#define BUTTON_PIN 20 // External button pin for toggling walk mode
 
 // Variables to hold PWM slice numbers
 uint slice_num1 ;
@@ -88,6 +97,9 @@ volatile int angle2 = 90;
 volatile int angle3 = 90;
 
 // PWM interrupt service routine
+// This ISR runs every time the PWM counter wraps (50Hz).
+// It updates the duty cycle values (control1/2/3) only when they change.
+// Updating in the ISR ensures glitch-free updates synchronized with the PWM cycle.
 void on_pwm_wrap() {
     uint32_t status = pwm_get_irq_status_mask();
 
@@ -130,6 +142,9 @@ int angle_to_duty_cycle(int angle) {
 }
 
 // This thread controls the motors
+// It smoothly interpolates the current 'angle' towards the 'target_angle'
+// based on the 'motor_speed'. This prevents jerky movements and reduces
+// mechanical stress on the TARS robot.
 static PT_THREAD (protothread_motors(struct pt *pt))
 {
     PT_BEGIN(pt);
@@ -314,37 +329,44 @@ static PT_THREAD (protothread_serial(struct pt *pt))
 }
 
 // Walk mode thread
+// Orchestrates the specific gait sequence for TARS to walk.
+// It sets target angles for the leg threads to follow.
 static PT_THREAD (protothread_walk(struct pt *pt)) {
     PT_BEGIN(pt);
     while(1) {
         PT_WAIT_UNTIL(pt, walk_mode);
         
-        // Step 1: set3 60
+        // Step 1: Raise the middle leg (Set3 -> 60)
+        // This prepares the robot to lean/pivot.
         motor_speed = 60.0;
         target_angle3 = CLAMP(60, min_angle3, max_angle3) + offset_motor3;
         PT_WAIT_UNTIL(pt, angle3 == target_angle3);
         PT_YIELD_usec(200000);
 
-        // Step 2: set12 55
+        // Step 2: Swing the side legs forward (Set12 -> 55)
+        // High speed movement to shift weight effectively.
         motor_speed = 200.0;
         target_angle1 = CLAMP(55, min_angle1, max_angle1) + offset_motor1;
         target_angle2 = 180 - CLAMP(55, min_angle2, max_angle2) + offset_motor2;
         PT_WAIT_UNTIL(pt, angle1 == target_angle1 && angle2 == target_angle2);
         PT_YIELD_usec(1200000);
 
-        // Step 3: set3 120
+        // Step 3: Lower the middle leg / Contact ground (Set3 -> 120)
+        // This plants the middle leg to push the body up/forward.
         motor_speed = 60.0;
         target_angle3 = CLAMP(120, min_angle3, max_angle3) + offset_motor3;
         // PT_WAIT_UNTIL(pt, angle3 == target_angle3);
         PT_YIELD_usec(500000);
 
-        // Step 4: set12 90
+        // Step 4: Return side legs to neutral (Set12 -> 90)
+        // Resets the side legs while balanced on the middle leg.
         target_angle1 = CLAMP(90, min_angle1, max_angle1) + offset_motor1;
         target_angle2 = 180 - CLAMP(90, min_angle2, max_angle2) + offset_motor2;
         PT_WAIT_UNTIL(pt, angle1 == target_angle1 && angle2 == target_angle2);
         // PT_YIELD_usec(200000);
 
-        // Step 5: set3 90
+        // Step 5: Return middle leg to neutral (Set3 -> 90)
+        // Completes the cycle, returning to standing position.
         motor_speed = 60.0;
         target_angle3 = CLAMP(90, min_angle3, max_angle3) + offset_motor3;
         PT_WAIT_UNTIL(pt, angle3 == target_angle3);
@@ -357,6 +379,8 @@ static PT_THREAD (protothread_walk(struct pt *pt)) {
 }
 
 // Calibration thread
+// Runs a 'start-up dance' sequence to verify motor range of motion
+// and visuals before entering the main loop.
 static PT_THREAD (protothread_calibrate(struct pt *pt)) {
     PT_BEGIN(pt);
     
